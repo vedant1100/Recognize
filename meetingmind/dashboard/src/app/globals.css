@@ -1,0 +1,17 @@
+@import url('https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background: #F7F5F2;
+  color: #1A1C1E;
+  font-family: "Public Sans", sans-serif;
+}
+
+@layer components {
+  .section-header {
+    @apply text-[10px] text-slate uppercase tracking-widest mb-3 font-medium;
+    font-family: "Space Grotesk", sans-serif;
+  }
+}
