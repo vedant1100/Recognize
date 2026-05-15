@@ -1,24 +1,20 @@
 """
 Query agent — on-demand executive Q&A.
-Parallel retrieval from EverOS + Butterbase RAG, then LLM synthesis with citations.
+Parallel retrieval from EverOS + Butterbase RAG, then Claude synthesis with citations.
 """
 import os
-import json
 import agentfield as af
-from openai import AsyncOpenAI
+from anthropic import AsyncAnthropic
 
 from retrieval import retrieve
 
-llm = AsyncOpenAI(
-    api_key=os.environ["TOKENROUTER_API_KEY"],
-    base_url=os.environ["TOKENROUTER_API_URL"],
-)
+llm = AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 app = af.App("query-agent")
 
-SYSTEM_PROMPT = """You are MeetingMind's executive knowledge assistant. You have access to
-speaker-attributed transcripts from all company meetings. Answer the user's question using
-ONLY the provided context. Cite your sources precisely: [Meeting: {title}, {date}].
+SYSTEM_PROMPT = """You are MeetingMind's executive knowledge assistant. You have access to \
+speaker-attributed transcripts from all company meetings. Answer the user's question using \
+ONLY the provided context. Cite your sources precisely: [Meeting: {title}, {date}]. \
 If the context doesn't contain enough information to answer, say so clearly."""
 
 
@@ -55,15 +51,14 @@ async def answer(question: str, org_id: str) -> dict:
             "citations": [],
         }
 
-    response = await llm.chat.completions.create(
-        model="claude-sonnet-4-6",  # Strong reasoning for synthesis
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
-        ],
+    response = await llm.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}],
     )
 
-    answer_text = response.choices[0].message.content
+    answer_text = response.content[0].text
 
     # Extract citations from context metadata
     citations = [

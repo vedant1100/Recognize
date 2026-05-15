@@ -1,6 +1,6 @@
 """
 MOM agent — triggered post-meeting by the meeting_bot_agent.
-Fetches transcript from Butterbase, calls LLM via TokenRouter, writes MOM back,
+Fetches transcript from Butterbase, calls Claude, writes MOM back,
 then in parallel triggers kpi_agent and graph_agent.
 """
 import asyncio
@@ -8,7 +8,7 @@ import json
 import os
 import httpx
 import agentfield as af
-from openai import AsyncOpenAI  # TokenRouter is OpenAI-compatible
+from anthropic import AsyncAnthropic
 
 from prompts import SYSTEM_PROMPT, build_mom_prompt
 from email_sender import send_mom_email
@@ -17,10 +17,7 @@ BUTTERBASE_API_KEY = os.environ["BUTTERBASE_API_KEY"]
 BUTTERBASE_API_URL = os.environ["BUTTERBASE_API_URL"]
 BUTTERBASE_APP_ID = os.environ["BUTTERBASE_APP_ID"]
 
-llm = AsyncOpenAI(
-    api_key=os.environ["TOKENROUTER_API_KEY"],
-    base_url=os.environ["TOKENROUTER_API_URL"],
-)
+llm = AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 app = af.App("mom-agent")
 
@@ -57,15 +54,19 @@ def _format_transcript(segments: list[dict]) -> str:
 
 
 async def _generate_mom(transcript_text: str) -> dict:
-    response = await llm.chat.completions.create(
-        model="claude-sonnet-4-6",  # TokenRouter routes to appropriate model
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": build_mom_prompt(transcript_text)},
+    response = await llm.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=4096,
+        system=[
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},  # cache the static system prompt
+            }
         ],
-        response_format={"type": "json_object"},
+        messages=[{"role": "user", "content": build_mom_prompt(transcript_text)}],
     )
-    return json.loads(response.choices[0].message.content)
+    return json.loads(response.content[0].text)
 
 
 async def _write_mom(meeting_id: str, mom: dict) -> str:

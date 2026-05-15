@@ -7,7 +7,7 @@ import os
 import json
 import httpx
 import agentfield as af
-from openai import AsyncOpenAI
+from anthropic import AsyncAnthropic
 from collections import defaultdict
 
 from metrics import (
@@ -19,10 +19,7 @@ BUTTERBASE_API_KEY = os.environ["BUTTERBASE_API_KEY"]
 BUTTERBASE_API_URL = os.environ["BUTTERBASE_API_URL"]
 BUTTERBASE_APP_ID = os.environ["BUTTERBASE_APP_ID"]
 
-llm = AsyncOpenAI(
-    api_key=os.environ["TOKENROUTER_API_KEY"],
-    base_url=os.environ["TOKENROUTER_API_URL"],
-)
+llm = AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 app = af.App("kpi-agent")
 HEADERS = {"Authorization": f"Bearer {BUTTERBASE_API_KEY}", "X-App-ID": BUTTERBASE_APP_ID}
@@ -57,12 +54,13 @@ async def _fetch_action_items_count(meeting_id: str) -> dict[str, int]:
 
 
 async def _sentiment_for_segments(person_segments: list[dict]) -> float:
-    """Calls LLM to get average sentiment score for a person's segments."""
+    """Calls Claude Haiku (cheapest) to get sentiment score for a person's segments."""
     if not person_segments:
         return 0.0
-    combined = " ".join(s["text"] for s in person_segments[:20])  # cap at 20 segments
-    response = await llm.chat.completions.create(
-        model="gpt-3.5-turbo",  # cheapest via TokenRouter for simple classification
+    combined = " ".join(s["text"] for s in person_segments[:20])
+    response = await llm.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=16,
         messages=[{
             "role": "user",
             "content": (
@@ -72,7 +70,7 @@ async def _sentiment_for_segments(person_segments: list[dict]) -> float:
         }],
     )
     try:
-        return float(response.choices[0].message.content.strip())
+        return float(response.content[0].text.strip())
     except ValueError:
         return 0.0
 
@@ -82,19 +80,19 @@ async def _key_topics(person_segments: list[dict]) -> list[str]:
     if not person_segments:
         return []
     combined = " ".join(s["text"] for s in person_segments[:30])
-    response = await llm.chat.completions.create(
-        model="gpt-3.5-turbo",
+    response = await llm.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=256,
         messages=[{
             "role": "user",
             "content": (
                 f"List the top 3-5 key topics discussed in these statements. "
-                f"Reply with a JSON array of short topic strings.\n\n{combined}"
+                f'Reply with only a JSON object: {{"topics": ["topic1", "topic2"]}}.\n\n{combined}'
             ),
         }],
-        response_format={"type": "json_object"},
     )
     try:
-        data = json.loads(response.choices[0].message.content)
+        data = json.loads(response.content[0].text)
         return data.get("topics", [])
     except (ValueError, KeyError):
         return []
