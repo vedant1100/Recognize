@@ -1,0 +1,231 @@
+{
+  "tables": {
+    "organizations": {
+      "columns": {
+        "id": { "type": "uuid", "primary": true, "default": "gen_random_uuid()" },
+        "name": { "type": "text", "nullable": false },
+        "slug": { "type": "text", "unique": true, "nullable": false },
+        "google_workspace_domain": { "type": "text" },
+        "settings": { "type": "jsonb", "default": "{}" },
+        "created_at": { "type": "timestamp", "default": "now()" }
+      }
+    },
+
+    "persons": {
+      "columns": {
+        "id": { "type": "uuid", "primary": true, "default": "gen_random_uuid()" },
+        "org_id": { "type": "uuid", "references": "organizations.id", "nullable": false },
+        "name": { "type": "text", "nullable": false },
+        "email": { "type": "text" },
+        "role": { "type": "text" },
+        "team": { "type": "text" },
+        "face_embedding": { "type": "jsonb", "comment": "ArcFace 512-dim vector as JSON array" },
+        "voice_embedding": { "type": "jsonb", "comment": "ECAPA-TDNN 192-dim vector as JSON array" },
+        "face_crop_url": { "type": "text", "comment": "Butterbase storage URL to face thumbnail" },
+        "face_enrolled": { "type": "boolean", "default": false },
+        "voice_enrolled": { "type": "boolean", "default": false },
+        "created_at": { "type": "timestamp", "default": "now()" }
+      },
+      "indexes": [
+        { "column": "org_id" },
+        { "column": "face_enrolled" },
+        { "column": "voice_enrolled" }
+      ]
+    },
+
+    "meetings": {
+      "columns": {
+        "id": { "type": "uuid", "primary": true, "default": "gen_random_uuid()" },
+        "org_id": { "type": "uuid", "references": "organizations.id", "nullable": false },
+        "title": { "type": "text" },
+        "google_meet_code": { "type": "text" },
+        "google_calendar_event_id": { "type": "text" },
+        "scheduled_start": { "type": "timestamp" },
+        "actual_start": { "type": "timestamp" },
+        "actual_end": { "type": "timestamp" },
+        "duration_seconds": { "type": "integer" },
+        "participant_count": { "type": "integer" },
+        "status": {
+          "type": "text",
+          "default": "waiting",
+          "check": "status IN ('waiting','enrolling','live','processing','completed','failed')"
+        },
+        "audio_recording_url": { "type": "text" },
+        "settings": { "type": "jsonb", "default": "{}", "comment": "stakeholder_emails, etc." },
+        "created_at": { "type": "timestamp", "default": "now()" }
+      },
+      "indexes": [
+        { "column": "org_id" },
+        { "column": "google_meet_code" },
+        { "column": "status" }
+      ]
+    },
+
+    "meeting_participants": {
+      "columns": {
+        "id": { "type": "uuid", "primary": true, "default": "gen_random_uuid()" },
+        "meeting_id": { "type": "uuid", "references": "meetings.id", "nullable": false },
+        "person_id": { "type": "uuid", "references": "persons.id", "nullable": false },
+        "joined_at": { "type": "timestamp" },
+        "left_at": { "type": "timestamp" },
+        "identification_method": {
+          "type": "text",
+          "check": "identification_method IN ('face','voice','both','manual')"
+        }
+      },
+      "indexes": [{ "columns": ["meeting_id", "person_id"], "unique": true }]
+    },
+
+    "transcript_segments": {
+      "columns": {
+        "id": { "type": "uuid", "primary": true, "default": "gen_random_uuid()" },
+        "meeting_id": { "type": "uuid", "references": "meetings.id", "nullable": false },
+        "person_id": { "type": "uuid", "references": "persons.id" },
+        "speaker_label": { "type": "text", "comment": "Raw diarization label e.g. SPEAKER_01" },
+        "start_time_ms": { "type": "integer", "nullable": false },
+        "end_time_ms": { "type": "integer", "nullable": false },
+        "text": { "type": "text", "nullable": false },
+        "confidence": { "type": "real" },
+        "created_at": { "type": "timestamp", "default": "now()" }
+      },
+      "indexes": [
+        { "column": "meeting_id" },
+        { "column": "person_id" },
+        { "columns": ["meeting_id", "start_time_ms"] }
+      ]
+    },
+
+    "moms": {
+      "columns": {
+        "id": { "type": "uuid", "primary": true, "default": "gen_random_uuid()" },
+        "meeting_id": { "type": "uuid", "references": "meetings.id", "unique": true, "nullable": false },
+        "summary": { "type": "text", "nullable": false },
+        "structured_mom": { "type": "jsonb", "nullable": false },
+        "sent_to": { "type": "jsonb", "comment": "Array of email addresses" },
+        "sent_at": { "type": "timestamp" },
+        "created_at": { "type": "timestamp", "default": "now()" }
+      }
+    },
+
+    "action_items": {
+      "columns": {
+        "id": { "type": "uuid", "primary": true, "default": "gen_random_uuid()" },
+        "mom_id": { "type": "uuid", "references": "moms.id" },
+        "meeting_id": { "type": "uuid", "references": "meetings.id", "nullable": false },
+        "assigned_to_person_id": { "type": "uuid", "references": "persons.id" },
+        "description": { "type": "text", "nullable": false },
+        "deadline": { "type": "date" },
+        "status": {
+          "type": "text",
+          "default": "pending",
+          "check": "status IN ('pending','in_progress','completed','cancelled')"
+        },
+        "completed_at": { "type": "timestamp" },
+        "created_at": { "type": "timestamp", "default": "now()" }
+      },
+      "indexes": [
+        { "column": "meeting_id" },
+        { "column": "assigned_to_person_id" },
+        { "column": "status" }
+      ]
+    },
+
+    "decisions": {
+      "columns": {
+        "id": { "type": "uuid", "primary": true, "default": "gen_random_uuid()" },
+        "mom_id": { "type": "uuid", "references": "moms.id" },
+        "meeting_id": { "type": "uuid", "references": "meetings.id", "nullable": false },
+        "description": { "type": "text", "nullable": false },
+        "decided_by": { "type": "jsonb", "comment": "Array of person_ids" },
+        "created_at": { "type": "timestamp", "default": "now()" }
+      },
+      "indexes": [{ "column": "meeting_id" }]
+    },
+
+    "participant_kpis": {
+      "columns": {
+        "id": { "type": "uuid", "primary": true, "default": "gen_random_uuid()" },
+        "meeting_id": { "type": "uuid", "references": "meetings.id", "nullable": false },
+        "person_id": { "type": "uuid", "references": "persons.id", "nullable": false },
+        "talk_time_seconds": { "type": "integer" },
+        "talk_ratio": { "type": "real" },
+        "interruption_count": { "type": "integer" },
+        "questions_asked": { "type": "integer" },
+        "statements_made": { "type": "integer" },
+        "action_items_assigned": { "type": "integer" },
+        "action_items_completed_from_previous": { "type": "integer" },
+        "sentiment_score": { "type": "real", "comment": "-1.0 to 1.0" },
+        "engagement_score": { "type": "real", "comment": "0.0 to 1.0" },
+        "key_topics": { "type": "jsonb" },
+        "created_at": { "type": "timestamp", "default": "now()" }
+      },
+      "indexes": [
+        { "columns": ["meeting_id", "person_id"], "unique": true },
+        { "column": "person_id" }
+      ]
+    }
+  },
+
+  "rag": {
+    "collections": {
+      "meeting_transcripts": {
+        "embedding_model": "text-embedding-3-small",
+        "purpose": "Semantic search across all transcript segments for executive Q&A",
+        "document_format": "{speaker_name} said: {text}",
+        "metadata_fields": ["meeting_id", "meeting_title", "date", "person_id", "start_time_ms", "org_id"]
+      }
+    }
+  },
+
+  "realtime_channels": {
+    "live_transcript": {
+      "purpose": "New transcript segments pushed to Meet Add-on as they are produced",
+      "payload": {
+        "id": "uuid",
+        "personName": "string",
+        "startTimeMs": "integer",
+        "text": "string"
+      }
+    },
+    "active_speaker": {
+      "purpose": "Face bounding boxes + speaking state pushed to Meet Add-on at 2fps",
+      "payload": {
+        "meeting_id": "uuid",
+        "overlay": [{
+          "trackId": "string",
+          "personId": "uuid | null",
+          "name": "string",
+          "bbox": { "x": "integer", "y": "integer", "w": "integer", "h": "integer" },
+          "isSpeaking": "boolean"
+        }]
+      }
+    },
+    "enrollment_status": {
+      "purpose": "Face detections + name suggestions pushed to Meet Add-on during enrollment",
+      "payload": {
+        "meeting_id": "uuid",
+        "faces": [{
+          "track_id": "string",
+          "face_crop_b64": "string",
+          "suggested_name": "string | null",
+          "suggested_person_id": "uuid | null"
+        }]
+      }
+    }
+  },
+
+  "edge_functions": {
+    "on_calendar_event": {
+      "trigger": "Google Calendar push notification webhook",
+      "description": "Checks if event has a Meet link, creates meeting record, logs upcoming join"
+    },
+    "on_meeting_end": {
+      "trigger": "Google Workspace Events API — conference.v2.ended",
+      "description": "Sets meeting status to processing, triggers mom-agent via AgentField"
+    },
+    "on_mom_ready": {
+      "trigger": "Butterbase row insert on moms table",
+      "description": "Sends MOM email to stakeholders in settings.stakeholder_emails"
+    }
+  }
+}
