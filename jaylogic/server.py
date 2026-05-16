@@ -206,6 +206,7 @@ def _handle_set_name(msg: dict) -> None:
     name = str(msg.get("name", "")).strip()
     if not speaker.startswith("person_"):
         return
+    print(f"[server] received set_name: {speaker} -> '{name}'")
     if name:
         _custom_labels[speaker] = name
         lip.set_name(speaker, name)

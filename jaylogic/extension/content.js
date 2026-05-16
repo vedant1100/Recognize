@@ -102,6 +102,9 @@ if (!window.__jaylogicContentLoaded) {
             faceCount = count;
             document.getElementById("jl-face-count").textContent = count;
           }
+          if (msg.tracks && msg.bounding_boxes) {
+             renderTracks(msg.tracks);
+          }
         }
 
         // Init event — speakers locked
@@ -199,6 +202,106 @@ if (!window.__jaylogicContentLoaded) {
     } catch (error) {
       console.error("[jaylogic] Autostart failed:", error);
     }
+  }
+
+  // ── Bounding Boxes & Names ────────────────────────────────────────────────
+  function renderTracks(tracks) {
+    let container = document.getElementById("jl-track-container");
+    if (!container) {
+      container = document.createElement("div");
+      container.id = "jl-track-container";
+      container.style.cssText = "position:absolute; inset:0; pointer-events:none;";
+      overlayRoot.appendChild(container);
+    }
+    
+    // We want to reuse input elements so they don't lose focus
+    const currentTids = new Set(tracks.map(t => t.track_id));
+    
+    // Remove stale
+    Array.from(container.children).forEach(child => {
+      if (!currentTids.has(child.dataset.tid)) {
+        child.remove();
+      }
+    });
+
+    tracks.forEach(t => {
+      let box = document.getElementById("box-" + t.track_id);
+      let wrap = document.getElementById("wrap-" + t.track_id);
+      
+      if (!box) {
+        box = document.createElement("div");
+        box.id = "box-" + t.track_id;
+        box.className = "jaylogic-box";
+        box.dataset.tid = t.track_id;
+        
+        wrap = document.createElement("div");
+        wrap.id = "wrap-" + t.track_id;
+        wrap.className = "jaylogic-name-wrap";
+        wrap.dataset.tid = t.track_id;
+        
+        const input = document.createElement("input");
+        input.className = "jaylogic-name-input";
+        input.type = "text";
+        input.placeholder = "Enter Name...";
+        
+        input.addEventListener("keydown", (e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") {
+            input.blur();
+            console.log("[jaylogic] Sending set_name:", t.speaker, "->", input.value);
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                event: "set_name",
+                speaker: t.speaker,
+                name: input.value
+              }));
+            }
+          }
+        });
+
+        ["pointerdown", "click", "keyup", "keypress"].forEach(evt => {
+          input.addEventListener(evt, e => e.stopPropagation());
+        });
+        
+        wrap.appendChild(input);
+        container.appendChild(box);
+        container.appendChild(wrap);
+      }
+      
+      const input = wrap.querySelector("input");
+      const isFocused = document.activeElement === input;
+      
+      if (!isFocused) {
+        input.value = t.name || t.speaker;
+        input.placeholder = t.speaker;
+      }
+      
+      if (t.is_speaking) {
+        box.style.borderColor = "#ff4444";
+        box.style.boxShadow = "0 0 10px rgba(255, 68, 68, 0.5)";
+      } else {
+        box.style.borderColor = "#11c26d";
+        box.style.boxShadow = "0 0 0 1px rgba(0, 0, 0, 0.35)";
+      }
+      
+      const [x, y, w, h] = t.bbox;
+      const scaleX = window.innerWidth / 640;
+      const scaleY = window.innerHeight / 360;
+      
+      const finalX = x * scaleX;
+      const finalY = y * scaleY;
+      
+      box.style.left = finalX + "px";
+      box.style.top = finalY + "px";
+      box.style.width = (w * scaleX) + "px";
+      box.style.height = (h * scaleY) + "px";
+      
+      // Freeze the input box position if the user is typing in it!
+      if (!isFocused) {
+        wrap.style.left = finalX + "px";
+        wrap.style.top = (finalY - 30) + "px";
+      }
+    });
   }
 
   // Autostart when loaded

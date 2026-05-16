@@ -66,7 +66,9 @@ class LipSpeakerDetector:
         # per-track state
         self._tracks: dict[str, deque] = {}             # track_id → MAR deque
         self._track_centroids: dict[str, tuple] = {}    # track_id → (cx, cy)
+        self._track_bboxes: dict[str, list] = {}        # track_id → [x, y, w, h]
         self._track_last_seen: dict[str, int] = {}      # track_id → frame#
+        self._track_age: dict[str, int] = {}            # track_id → number of frames matched
         self._next_id = 1
 
         # identity mapping
@@ -129,7 +131,7 @@ class LipSpeakerDetector:
             elif self._person_map_locked:
                 n = len(self._person_map)
                 for tid, _ in matched:
-                    if tid not in self._person_map:
+                    if tid not in self._person_map and self._track_age.get(tid, 0) >= 15:
                         n += 1
                         self._person_map[tid] = f"person_{n}"
 
@@ -218,30 +220,70 @@ class LipSpeakerDetector:
         horiz = ((lt.x - rt.x) ** 2 + (lt.y - rt.y) ** 2) ** 0.5
         return vert / (horiz + 1e-8)
 
+    @staticmethod
+    def _bbox_iou(box1: list[int], box2: list[int]) -> float:
+        x1, y1, w1, h1 = box1
+        x2, y2, w2, h2 = box2
+        ix1 = max(x1, x2)
+        iy1 = max(y1, y2)
+        ix2 = min(x1 + w1, x2 + w2)
+        iy2 = min(y1 + h1, y2 + h2)
+        i_area = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        if i_area == 0:
+            return 0.0
+        u_area = w1 * h1 + w2 * h2 - i_area
+        return i_area / u_area if u_area > 0 else 0.0
+
     def _match_tracks(self, detections: list[dict]) -> list[tuple]:
-        """Greedy nearest-centroid matching.  Returns [(track_id, detection)]."""
+        """IoU + Centroid matching.  Returns [(track_id, detection)]."""
         matched = []
         used_tids: set[str] = set()
         used_dets: set[int] = set()
 
         if not self._track_centroids:
-            # First frame — create new tracks for everything
             for det in detections:
                 tid = f"t_{self._next_id}"
                 self._next_id += 1
                 self._tracks[tid] = deque(maxlen=self._mar_window)
                 self._tracks[tid].append(det["mar"])
                 self._track_centroids[tid] = det["centroid"]
+                self._track_bboxes[tid] = det["bbox"]
                 self._track_last_seen[tid] = self._frame_count
+                self._track_age[tid] = 1
                 matched.append((tid, det))
             return matched
 
-        # build (dist, det_idx, track_id) pairs
+        # Phase 1: IoU Matching
+        iou_pairs = []
+        for i, det in enumerate(detections):
+            for tid, bbox in self._track_bboxes.items():
+                iou = self._bbox_iou(det["bbox"], bbox)
+                if iou > 0.15:
+                    iou_pairs.append((iou, i, tid))
+        iou_pairs.sort(reverse=True)
+        
+        for _, i, tid in iou_pairs:
+            if i in used_dets or tid in used_tids:
+                continue
+            used_dets.add(i)
+            used_tids.add(tid)
+            self._tracks[tid].append(detections[i]["mar"])
+            self._track_centroids[tid] = detections[i]["centroid"]
+            self._track_bboxes[tid] = detections[i]["bbox"]
+            self._track_last_seen[tid] = self._frame_count
+            self._track_age[tid] = self._track_age.get(tid, 0) + 1
+            matched.append((tid, detections[i]))
+
+        # Phase 2: Fallback Centroid Matching
         pairs = []
         for i, det in enumerate(detections):
+            if i in used_dets:
+                continue
             for tid, c in self._track_centroids.items():
+                if tid in used_tids:
+                    continue
                 d = ((det["centroid"][0] - c[0]) ** 2 + (det["centroid"][1] - c[1]) ** 2) ** 0.5
-                if d < _MATCH_DIST:
+                if d < 0.2:
                     pairs.append((d, i, tid))
         pairs.sort()
 
@@ -252,10 +294,12 @@ class LipSpeakerDetector:
             used_tids.add(tid)
             self._tracks[tid].append(detections[i]["mar"])
             self._track_centroids[tid] = detections[i]["centroid"]
+            self._track_bboxes[tid] = detections[i]["bbox"]
             self._track_last_seen[tid] = self._frame_count
+            self._track_age[tid] = self._track_age.get(tid, 0) + 1
             matched.append((tid, detections[i]))
 
-        # new tracks for unmatched detections
+        # Phase 3: New tracks
         for i, det in enumerate(detections):
             if i in used_dets:
                 continue
@@ -264,7 +308,9 @@ class LipSpeakerDetector:
             self._tracks[tid] = deque(maxlen=self._mar_window)
             self._tracks[tid].append(det["mar"])
             self._track_centroids[tid] = det["centroid"]
+            self._track_bboxes[tid] = det["bbox"]
             self._track_last_seen[tid] = self._frame_count
+            self._track_age[tid] = 1
             matched.append((tid, det))
 
         return matched
@@ -277,7 +323,9 @@ class LipSpeakerDetector:
             if age > limit:
                 self._tracks.pop(tid, None)
                 self._track_centroids.pop(tid, None)
+                self._track_bboxes.pop(tid, None)
                 self._track_last_seen.pop(tid, None)
+                self._track_age.pop(tid, None)
 
     def _push_timeline(self, ts_ms: float, speaker: str | None) -> None:
         with self._lock:

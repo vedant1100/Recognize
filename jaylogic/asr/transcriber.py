@@ -177,10 +177,10 @@ class GroqWhisperTranscriber(BaseMicrophoneTranscriber):
             if len(self._pcm_accum) > keep_bytes:
                 self._pcm_accum = bytearray(self._pcm_accum[-keep_bytes:])
 
-        # Skip silent audio — prevents Whisper hallucinations
+        # Skip silent audio — prevents Whisper hallucinations and saves API rate limits!
         samples = np.frombuffer(window_pcm, dtype=np.int16)
         peak = int(np.max(np.abs(samples))) if len(samples) > 0 else 0
-        if peak < 200:
+        if peak < 2000:
             return
 
         audio_end_ms = time.monotonic() * 1000 - self._session_start_ms
@@ -224,11 +224,12 @@ class GroqWhisperTranscriber(BaseMicrophoneTranscriber):
         files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
         data = {
             "model": self._model,
-            "language": self._language,
             "response_format": "verbose_json",
             "timestamp_granularities[]": "word",
-            "prompt": "Meeting transcription. Multiple speakers in a conference room.",
+            "prompt": "Meeting transcription in English and Hindi. Multiple speakers in a conference room.",
         }
+        if self._language:
+            data["language"] = self._language
 
         resp = requests.post(self._endpoint, headers=headers, files=files, data=data, timeout=45)
         resp.raise_for_status()
