@@ -13,6 +13,7 @@ const ENTITY_COLOR = {
   PLACE:        new THREE.Color('#5cb87a'),
   TECHNOLOGY:   new THREE.Color('#50c8c8'),
   EVENT:        new THREE.Color('#c8b840'),
+  CHUNK:        new THREE.Color('#8a50d4'),
 }
 
 function entityColor(node) {
@@ -170,17 +171,13 @@ function GraphEdges({ graphData, nodesRef, dirtyRef }) {
   )
 }
 
-// ── NodeLabels ────────────────────────────────────────────
 function NodeLabels({ graphData, nodesRef, dirtyRef }) {
   const groupRef = useRef()
   const count    = graphData.nodes.length
+  const selected = useStore(s => s.selectedNode)
+  const setSelected = useStore(s => s.setSelectedNode)
 
-  // Labels must not eat pointer events meant for the spheres underneath
-  useEffect(() => {
-    if (!groupRef.current) return
-    groupRef.current.traverse(o => { o.raycast = () => null })
-  }, [count])
-
+  // We intentionally allow labels to be clicked now
   useFrame(() => {
     if (!groupRef.current || count === 0 || !dirtyRef.current) return
     const children = groupRef.current.children
@@ -198,7 +195,15 @@ function NodeLabels({ graphData, nodesRef, dirtyRef }) {
       {graphData.nodes.map((n, i) => {
         const label = (n.label || '').length > 22 ? (n.label || '').slice(0, 22) + '…' : (n.label || '')
         return (
-          <Billboard key={n.id || i} raycast={() => null}>
+          <Billboard 
+            key={n.id || i}
+            onClick={(e) => {
+              e.stopPropagation()
+              setSelected(selected?.id === n.id ? null : n)
+            }}
+            onPointerEnter={() => { document.body.style.cursor = 'pointer' }}
+            onPointerLeave={() => { document.body.style.cursor = 'default' }}
+          >
             <Text
               fontSize={3.6}
               color="#F7F5F2"
@@ -208,7 +213,6 @@ function NodeLabels({ graphData, nodesRef, dirtyRef }) {
               outlineColor="#000000"
               outlineOpacity={0.9}
               maxWidth={50}
-              raycast={() => null}
             >
               {label}
             </Text>

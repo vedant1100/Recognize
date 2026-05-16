@@ -46,7 +46,7 @@ NEO4J_USER = os.getenv("NEO4J_USER",     "neo4j")
 NEO4J_PASS = os.getenv("NEO4J_PASSWORD", "Durban@28")
 EMBED_DIM  = 384  # all-MiniLM-L6-v2
 
-driver       = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
+driver       = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS), connection_timeout=3.0)
 embedder     = SentenceTransformer("all-MiniLM-L6-v2")
 
 # ── LLM client (TokenRouter, OpenAI-compatible) ───────────────────────────────
@@ -84,13 +84,9 @@ def _setup_schema(tx):
             pass  # Index may already exist or version < 5.11
 
 
-try:
-    with driver.session() as s:
-        s.execute_write(_setup_schema)
-    print("[OK] Neo4j schema ready")
-except Exception as e:
-    print(f"[WARN] Neo4j not reachable at startup: {e}")
-
+with driver.session() as s:
+    _setup_schema(s)
+print("[OK] Neo4j schema ready")
 
 # ── Text extraction & chunking ─────────────────────────────────────────────────
 def extract_text(content: bytes, filename: str) -> str:
@@ -314,12 +310,34 @@ async def get_graph():
             """
         ).data()
 
+        chunks = s.run(
+            """
+            MATCH (c:Chunk)
+            OPTIONAL MATCH (c)-[r:MENTIONS]->(e:Entity)
+            WITH c, count(r) AS degree
+            RETURN c.id AS id, substring(c.text, 0, 50) AS label, 'CHUNK' AS type,
+                   c.text AS preview, degree
+            ORDER BY degree DESC
+            LIMIT 500
+            """
+        ).data()
+
         links = s.run(
             """
             MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity)
             RETURN a.id AS source, b.id AS target,
                    r.relation AS relation,
                    toFloat(r.weight) / 10.0 AS strength
+            LIMIT 1200
+            """
+        ).data()
+
+        chunk_links = s.run(
+            """
+            MATCH (c:Chunk)-[:MENTIONS]->(e:Entity)
+            RETURN c.id AS source, e.id AS target,
+                   'MENTIONS' AS relation,
+                   0.5 AS strength
             LIMIT 1200
             """
         ).data()
@@ -334,6 +352,16 @@ async def get_graph():
             "connections": e["degree"],
         }
         for e in entities
+    ] + [
+        {
+            "id":          c["id"],
+            "label":       c["label"] + "...",
+            "type":        "CHUNK",
+            "preview":     c["preview"],
+            "chunk_index": 0,
+            "connections": c["degree"],
+        }
+        for c in chunks
     ]
     edges = [
         {
@@ -343,6 +371,14 @@ async def get_graph():
             "strength": min(1.0, max(0.1, l["strength"] or 0.3)),
         }
         for l in links
+    ] + [
+        {
+            "source":   l["source"],
+            "target":   l["target"],
+            "relation": l["relation"],
+            "strength": l["strength"],
+        }
+        for l in chunk_links
     ]
     return {"nodes": nodes, "links": edges}
 
@@ -663,13 +699,14 @@ async def _local_query(req: QueryRequest):
         "Use the entities, graph relationships, and source text to answer. "
         "Cite entity names and relationships when relevant."
     )
+    comm_str = f"Community context:\n{comm_section}\n" if comm_section else ""
     user_msg = f"""Relevant entities:
 {entity_section}
 
 Knowledge graph relationships:
 {graph_section}
 
-{"Community context:\n" + comm_section + chr(10) if comm_section else ""}Source text:
+{comm_str}Source text:
 {chunk_section}
 
 Question: {req.query}"""
@@ -840,3 +877,7 @@ async def delete_document(doc_id: str):
 dist_path = Path(__file__).parent.parent / "dist"
 if dist_path.exists():
     app.mount("/", StaticFiles(directory=str(dist_path), html=True), name="frontend")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
