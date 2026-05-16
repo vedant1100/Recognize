@@ -91,13 +91,13 @@ class GroqWhisperTranscriber(BaseMicrophoneTranscriber):
             raise RuntimeError("GROQ_API_KEY is not set")
 
         self._endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
-        self._model = os.getenv("WHISPER_MODEL", "whisper-large-v3-turbo")
-        self._language = os.getenv("WHISPER_LANGUAGE", "en")
-        self._window_s = float(os.getenv("WHISPER_WINDOW_S", "3.0"))
-        self._stride_s = float(os.getenv("WHISPER_STRIDE_S", "3.2"))
-        self._dedupe_margin_ms = float(os.getenv("WHISPER_DEDUPE_MARGIN_MS", "60"))
-        self._max_retries = int(os.getenv("WHISPER_MAX_RETRIES", "3"))
-        self._max_pending_jobs = int(os.getenv("WHISPER_MAX_PENDING_JOBS", "2"))
+        self._model = "whisper-large-v3-turbo"
+        self._language = ""
+        self._window_s = 6.0
+        self._stride_s = 5.0
+        self._dedupe_margin_ms = 60.0
+        self._max_retries = 0
+        self._max_pending_jobs = 2
 
         self._lock = threading.Lock()
         self._pcm_accum = bytearray()
@@ -231,7 +231,7 @@ class GroqWhisperTranscriber(BaseMicrophoneTranscriber):
         if self._language:
             data["language"] = self._language
 
-        resp = requests.post(self._endpoint, headers=headers, files=files, data=data, timeout=45)
+        resp = requests.post(self._endpoint, headers=headers, files=files, data=data, timeout=10)
         resp.raise_for_status()
         return resp.json()
 
