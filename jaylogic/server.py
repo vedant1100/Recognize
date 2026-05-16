@@ -27,8 +27,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-import httpx
-
 import cv2
 import numpy as np
 import uvicorn
@@ -164,10 +162,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         pass
     finally:
         drain.cancel()
-        txt_path = _save_transcript(session_words)
-        if txt_path:
-            md_path = _build_markdown(session_words, txt_path)
-            asyncio.create_task(_upload_to_graph(txt_path, md_path))
+        _save_transcript(session_words)
 
 
 async def _drain_to(ws: WebSocket, session_words: list[dict]) -> None:
@@ -186,10 +181,10 @@ async def _drain_to(ws: WebSocket, session_words: list[dict]) -> None:
             break
 
 
-def _save_transcript(session_words: list[dict]) -> Path | None:
+def _save_transcript(session_words: list[dict]) -> None:
     if not session_words:
         print("[server] no transcript words captured for this stream")
-        return None
+        return
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     transcripts_dir = Path(__file__).resolve().parent / "transcripts"
@@ -204,43 +199,6 @@ def _save_transcript(session_words: list[dict]) -> Path | None:
                 f"[{start_ms if start_ms is not None else '-'}-{end_ms if end_ms is not None else '-'}]\n"
             )
     print(f"[server] transcript saved: {out_path}")
-    return out_path
-
-
-def _build_markdown(session_words: list[dict], txt_path: Path) -> Path:
-    date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    lines = [f"# Meeting Transcript — {date_str}\n"]
-
-    # Group consecutive words from the same speaker into utterances
-    cur_speaker, cur_words = None, []
-    for row in session_words:
-        spk = row.get("speaker", "unknown")
-        if spk != cur_speaker:
-            if cur_speaker is not None:
-                lines.append(f"**{cur_speaker}:** {' '.join(cur_words)}\n")
-            cur_speaker, cur_words = spk, [row["word"]]
-        else:
-            cur_words.append(row["word"])
-    if cur_speaker:
-        lines.append(f"**{cur_speaker}:** {' '.join(cur_words)}\n")
-
-    md_path = txt_path.with_suffix(".md")
-    md_path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"[server] markdown saved: {md_path}")
-    return md_path
-
-
-async def _upload_to_graph(txt_path: Path, md_path: Path) -> None:
-    print("enter here plss")
-    url = "http://localhost:8000/api/upload"
-    async with httpx.AsyncClient(timeout=60) as client:
-        for path in (txt_path, md_path):
-            content = path.read_bytes()
-            resp = await client.post(
-                url,
-                files={"file": (path.name, content, "text/plain")},
-            )
-            print(f"[server] uploaded {path.name} → {resp.status_code} {resp.text[:80]}")
 
 
 def _handle_set_name(msg: dict) -> None:
