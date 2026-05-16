@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Jaylogic Live Diarization",
+  "version": "0.1.0",
+  "description": "Capture Meet tab video and display live ASD speaker-labeled transcripts.",
+  "action": {
+    "default_title": "Jaylogic",
+    "default_popup": "popup.html"
+  },
+  "permissions": ["tabCapture", "offscreen", "storage", "activeTab"],
+  "host_permissions": ["http://localhost/*", "ws://localhost/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["offscreen.html", "offscreen.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

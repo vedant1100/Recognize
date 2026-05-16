@@ -22,6 +22,8 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -122,38 +124,62 @@ app = FastAPI(lifespan=lifespan)
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
+    session_words: list[dict] = []
 
     # Flush stale messages from a previous connection
     while not _out_queue.empty():
         _out_queue.get_nowait()
 
     loop = asyncio.get_event_loop()
-    drain = asyncio.create_task(_drain_to(ws))
+    drain = asyncio.create_task(_drain_to(ws, session_words))
 
     try:
         while True:
             raw = await ws.receive_text()
             msg = json.loads(raw)
-            ts_ms = float(msg["ts_ms"])
-            if msg.get("type") == "audio":
-                pcm = base64.b64decode(msg["pcm"])
-                transcriber.push_audio(pcm, ts_ms)
-            else:
-                jpeg = base64.b64decode(msg["frame"])
-                await loop.run_in_executor(_frame_executor, _process_frame, jpeg, ts_ms)
+            jpeg = base64.b64decode(msg["frame"])
+            await loop.run_in_executor(_frame_executor, _process_frame, jpeg, float(msg["ts_ms"]))
     except WebSocketDisconnect:
         pass
     finally:
         drain.cancel()
+        _save_transcript(session_words)
 
 
-async def _drain_to(ws: WebSocket) -> None:
+async def _drain_to(ws: WebSocket, session_words: list[dict]) -> None:
     while True:
         msg = await _out_queue.get()
+        if "word" in msg:
+            session_words.append(
+                {
+                    "speaker": msg.get("speaker", "unknown"),
+                    "word": msg.get("word", ""),
+                    "start_ms": msg.get("start_ms"),
+                    "end_ms": msg.get("end_ms"),
+                }
+            )
         try:
             await ws.send_text(json.dumps(msg))
         except Exception:
             break  # connection gone; drop the message
+
+
+def _save_transcript(session_words: list[dict]) -> None:
+    if not session_words:
+        print("[server] no transcript words captured for this stream")
+        return
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = Path(__file__).resolve().parent / f"transcript_{ts}.txt"
+    with out_path.open("w", encoding="utf-8") as f:
+        for row in session_words:
+            start_ms = row.get("start_ms")
+            end_ms = row.get("end_ms")
+            f.write(
+                f"{row['speaker']}: {row['word']} "
+                f"[{start_ms if start_ms is not None else '-'}-{end_ms if end_ms is not None else '-'}]\n"
+            )
+    print(f"[server] transcript saved: {out_path}")
 
 
 # ── frame processing (runs in _frame_executor, single thread) ─────────────────
@@ -178,6 +204,15 @@ def _process_frame(jpeg: bytes, ts_ms: float) -> None:
         for q in list(_feed_clients):
             _loop.call_soon_threadsafe(q.put_nowait, init_msg)
         print(f"[server] locked person map: {_person_map}")
+    elif _person_map_locked and tracks:
+        # Assign labels to track IDs that appeared after initialization (late joins)
+        new_tracks = [t for t in tracks if t["track_id"] not in _person_map]
+        if new_tracks:
+            n = len(_person_map)
+            for t in new_tracks:
+                n += 1
+                _person_map[t["track_id"]] = f"person_{n}"
+            print(f"[server] late-join tracks assigned: { {t['track_id']: _person_map[t['track_id']] for t in new_tracks} }")
 
 
 
