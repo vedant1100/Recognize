@@ -17,11 +17,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import anthropic
+import markdown as md
 import networkx as nx
 import numpy as np
 import pypdf
 import docx
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import httpx
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from neo4j import GraphDatabase
@@ -110,17 +112,17 @@ EXTRACT_SYSTEM = "You are a knowledge graph extraction engine. Output only valid
 EXTRACT_USER = """Extract entities and relationships from the text below.
 
 Return ONLY this JSON (no code fences, no extra text):
-{{
+{
   "entities": [
-    {{"name": "...", "type": "CONCEPT|PERSON|ORGANIZATION|PLACE|TECHNOLOGY|EVENT", "description": "one sentence"}}
+    {"name": "...", "type": "CONCEPT|PERSON|ORGANIZATION|PLACE|TECHNOLOGY|EVENT", "description": "one sentence"}
   ],
   "relationships": [
-    {{"source": "EntityA", "target": "EntityB", "relation": "VERB_PHRASE"}}
+    {"source": "EntityA", "target": "EntityB", "relation": "VERB_PHRASE"}
   ]
-}}
+}
 
 Text:
-{text}"""
+__TEXT__"""
 
 
 async def extract_graph(text: str) -> dict:
@@ -129,13 +131,19 @@ async def extract_graph(text: str) -> dict:
             model="claude-haiku-4-5-20251001",
             max_tokens=1200,
             system=EXTRACT_SYSTEM,
-            messages=[{"role": "user", "content": EXTRACT_USER.format(text=text)}],
+            messages=[{"role": "user", "content": EXTRACT_USER.replace("__TEXT__", text)}],
         )
         raw = resp.content[0].text.strip()
         raw = re.sub(r"^```[a-z]*\n?", "", raw)
         raw = re.sub(r"\n?```$", "", raw)
+        # Slice out the first {...} object in case Claude added preamble/trailing prose
+        start, end = raw.find("{"), raw.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            raw = raw[start : end + 1]
         return json.loads(raw)
-    except Exception:
+    except Exception as e:
+        print(f"[extract_graph] FAILED: {type(e).__name__}: {e}")
+        print(f"[extract_graph] raw response:\n{raw[:1000] if 'raw' in dir() else '(no response)'}\n---")
         return {"entities": [], "relationships": []}
 
 
@@ -328,6 +336,231 @@ async def get_graph():
         for l in links
     ]
     return {"nodes": nodes, "links": edges}
+
+
+# ── Meeting session finalization ──────────────────────────────────────────────
+class SessionWord(BaseModel):
+    speaker: str
+    word: str
+    ts: int
+
+class SessionRequest(BaseModel):
+    recorded_at: str
+    duration_seconds: int = 0
+    participants: list[str] = []
+    words: list[SessionWord]
+
+MOM_SYSTEM = "You are a professional meeting secretary. Output only clean Markdown, no preamble or code fences."
+
+MOM_PROMPT = """Create structured Minutes of Meeting from this transcript.
+
+Date: {date}
+Duration: {duration}
+Participants: {participants}
+
+Transcript:
+{transcript}
+
+Use this exact structure:
+# Minutes of Meeting — {date}
+**Participants:** {participants}
+**Duration:** {duration}
+
+## Summary
+2-3 sentence overview.
+
+## Key Discussion Points
+- ...
+
+## Decisions Made
+- ... (write "None recorded" if absent)
+
+## Action Items
+| Owner | Action |
+|-------|--------|
+| name | task |
+
+## Full Transcript
+**SpeakerName:** their words..."""
+
+
+@app.post("/api/session/finalize")
+async def finalize_session(req: SessionRequest, background_tasks: BackgroundTasks):
+    if not req.words:
+        raise HTTPException(400, "No transcript words provided.")
+
+    # Group consecutive words by same speaker into utterances
+    utterances: list[dict] = []
+    cur: dict | None = None
+    for w in req.words:
+        if not cur or cur["speaker"] != w.speaker:
+            cur = {"speaker": w.speaker, "text": w.word}
+            utterances.append(cur)
+        else:
+            cur["text"] += " " + w.word
+
+    transcript = "\n".join(f"**{u['speaker']}:** {u['text']}" for u in utterances)
+
+    date_str = req.recorded_at[:10]
+    mins, secs = divmod(req.duration_seconds, 60)
+    duration_str = f"{mins}m {secs}s"
+    participants_str = ", ".join(req.participants) if req.participants else "Unknown"
+
+    mom_resp = claude.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=2000,
+        system=MOM_SYSTEM,
+        messages=[{"role": "user", "content": MOM_PROMPT.format(
+            date=date_str,
+            duration=duration_str,
+            participants=participants_str,
+            transcript=transcript,
+        )}],
+    )
+    mom_markdown = mom_resp.content[0].text.strip()
+
+    # Build raw transcript markdown — preserves speaker detail MoM may omit
+    transcript_markdown = (
+        f"# Meeting Transcript — {date_str}\n"
+        f"**Participants:** {participants_str}\n"
+        f"**Duration:** {duration_str}\n\n"
+        + transcript
+    )
+
+    # Ingest both in parallel — Neo4j deduplicates overlapping entities automatically
+    mom_result, transcript_result = await asyncio.gather(
+        ingest_file(mom_markdown.encode("utf-8"),        f"meeting-{date_str}-mom.md"),
+        ingest_file(transcript_markdown.encode("utf-8"), f"meeting-{date_str}-transcript.md"),
+    )
+
+    # Debrief agent runs in background after ingestion completes
+    background_tasks.add_task(_run_debrief_agent, mom_markdown, req.participants, date_str)
+
+    return {
+        "mom":        {"doc_id": mom_result["doc_id"],        "chunks": mom_result["chunks"]},
+        "transcript": {"doc_id": transcript_result["doc_id"], "chunks": transcript_result["chunks"]},
+        "chunks":     mom_result["chunks"] + transcript_result["chunks"],
+    }
+
+
+# ── Debrief email rendering (debrief logic lives in agents/debrief-agent) ─────
+def _build_email_html(debrief: dict, date_str: str, mom_text: str = "") -> str:
+    contradictions = debrief.get("contradictions", [])
+    action_items   = debrief.get("action_items", [])
+    summary        = debrief.get("summary", "")
+
+    mom_html = md.markdown(mom_text, extensions=["tables", "fenced_code"]) if mom_text else ""
+
+    if contradictions:
+        rows = "".join(
+            f"<tr><td><strong>{c['topic']}</strong></td>"
+            f"<td>{c['current_decision']}</td>"
+            f"<td>{c['past_decision']}</td>"
+            f"<td style='color:#6b7280;font-size:12px'>{c.get('source_meeting','')}</td></tr>"
+            for c in contradictions
+        )
+        contra_block = f"""
+        <h3 style="color:#ef4444">⚠️ Contradictions Found</h3>
+        <table border="1" cellpadding="8" cellspacing="0"
+               style="border-collapse:collapse;width:100%;font-size:14px">
+          <tr style="background:#fef2f2">
+            <th>Topic</th><th>Today's Decision</th>
+            <th>Past Decision</th><th>Source Meeting</th>
+          </tr>{rows}
+        </table>"""
+    else:
+        contra_block = "<h3 style='color:#22c55e'>✓ No contradictions found with past meetings</h3>"
+
+    if action_items:
+        rows = "".join(
+            f"<tr><td><strong>{a['owner']}</strong></td>"
+            f"<td>{a['action']}</td>"
+            f"<td style='color:#f59e0b'>{a.get('open_history') or '—'}</td></tr>"
+            for a in action_items
+        )
+        action_block = f"""
+        <h3>📋 Action Items</h3>
+        <table border="1" cellpadding="8" cellspacing="0"
+               style="border-collapse:collapse;width:100%;font-size:14px">
+          <tr style="background:#f0f9ff">
+            <th>Owner</th><th>Action</th><th>Open Items from Past Meetings</th>
+          </tr>{rows}
+        </table>"""
+    else:
+        action_block = "<h3>📋 Action Items</h3><p>None recorded.</p>"
+
+    mom_block = f"""
+      <h3>📝 Meeting Notes</h3>
+      <div style="background:#fafafa;border:1px solid #e5e7eb;border-radius:6px;
+                  padding:16px 20px;font-size:14px;line-height:1.55;color:#1f2937">
+        {mom_html}
+      </div>
+      <br>
+    """ if mom_html else ""
+
+    return f"""
+    <div style="font-family:sans-serif;max-width:800px;margin:0 auto;padding:24px;color:#111">
+      <h2 style="border-bottom:2px solid #e5e7eb;padding-bottom:8px">
+        Meeting Debrief — {date_str}
+      </h2>
+      <h3>Summary</h3>
+      <p style="color:#374151">{summary}</p>
+      {mom_block}
+      {contra_block}
+      <br>
+      {action_block}
+      <hr style="margin-top:32px;border:none;border-top:1px solid #e5e7eb">
+      <p style="color:#9ca3af;font-size:12px">
+        Generated by Recognize · GraphRAG Debrief Agent
+      </p>
+    </div>"""
+
+
+AGENTFIELD_URL = os.getenv("AGENTFIELD_URL", "http://localhost:8080")
+DEBRIEF_AGENT_ENDPOINT = f"{AGENTFIELD_URL}/api/v1/execute/debrief-agent.debrief_run_debrief"
+
+
+async def _run_debrief_agent(mom_text: str, participants: list[str], date_str: str):
+    recipients = os.getenv("MEETING_RECIPIENTS", "")
+    if not recipients:
+        print("[Debrief] MEETING_RECIPIENTS not set — skipping email")
+        return
+
+    try:
+        async with httpx.AsyncClient() as client:
+            agent_resp = await client.post(
+                DEBRIEF_AGENT_ENDPOINT,
+                json={"input": {
+                    "mom_text":     mom_text,
+                    "participants": participants,
+                    "date_str":     date_str,
+                }},
+                timeout=120,
+            )
+            agent_resp.raise_for_status()
+            payload = agent_resp.json()
+    except Exception as e:
+        print(f"[Debrief] Agent call failed: {e}")
+        return
+
+    # AgentField wraps reasoner return value under `output` (or similar).
+    # Accept either {output: {...}} or the raw debrief dict.
+    debrief_result = payload.get("output") or payload.get("result") or payload
+    if not isinstance(debrief_result, dict) or "summary" not in debrief_result:
+        print(f"[Debrief] Unexpected agent response shape: {payload}")
+        return
+
+    html = _build_email_html(debrief_result, date_str, mom_text=mom_text)
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                "http://localhost:3001/send",
+                json={"to": recipients, "subject": f"Meeting Debrief — {date_str}", "html": html},
+                timeout=10,
+            )
+        print(f"[Debrief] Email sent for {date_str}")
+    except Exception as e:
+        print(f"[Debrief] Email send failed: {e}")
 
 
 # ── Local GraphRAG query ──────────────────────────────────────────────────────
