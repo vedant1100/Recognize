@@ -2,6 +2,26 @@ const DEFAULT_WS_URL = "ws://localhost:8765/ws";
 let offscreenReady = false;
 let running = false;
 let connected = false;
+let activeTabId = null;
+
+async function ensureContentOverlayInjected(tabId) {
+  try {
+    const ping = await chrome.tabs.sendMessage(tabId, { type: "PING_CONTENT" }).catch(() => null);
+    if (ping && ping.loaded) {
+      return;
+    }
+    await chrome.scripting.insertCSS({
+      target: { tabId },
+      files: ["content.css"],
+    });
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"],
+    });
+  } catch (_err) {
+    // Best effort; stream can still run without overlay.
+  }
+}
 
 async function ensureOffscreenDocument() {
   const url = chrome.runtime.getURL("offscreen.html");
@@ -34,6 +54,8 @@ async function startCapture(wsUrl) {
   await ensureOffscreenDocument();
 
   const tabId = await getCurrentTabId();
+  activeTabId = tabId;
+  await ensureContentOverlayInjected(tabId);
   const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
 
   await chrome.runtime.sendMessage({
@@ -112,9 +134,32 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return;
     }
 
+    if (msg.type === "OFFSCREEN_TRACKS") {
+      if (activeTabId !== null) {
+        chrome.tabs.sendMessage(activeTabId, { type: "TRACKS", payload: msg.payload }).catch((err) => {
+        });
+      }
+      sendResponse({ ok: true });
+      return;
+    }
+
     if (msg.type === "OFFSCREEN_INIT") {
       chrome.runtime.sendMessage({ type: "INIT", payload: msg.payload }).catch(() => {});
       sendResponse({ ok: true });
+      return;
+    }
+
+    if (msg.type === "CONTENT_SET_NAME") {
+      try {
+        await chrome.runtime.sendMessage({
+          type: "OFFSCREEN_SET_NAME",
+          speaker: msg.speaker,
+          name: msg.name,
+        });
+        sendResponse({ ok: true });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err?.message || err) });
+      }
       return;
     }
   })();

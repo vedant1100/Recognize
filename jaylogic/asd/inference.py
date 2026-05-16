@@ -75,7 +75,7 @@ class ASDInference:
         results = []
         for tid, crops in snapshot.items():
             if len(crops) < 5:
-                continue
+                continue  # insufficient history; diarizer sees no entry → word gets "unknown"
             try:
                 score = self._forward(crops, mfcc_feat)
                 results.append({"track_id": tid, "prob": float(score), "ts_ms": ts_ms})

@@ -11,6 +11,7 @@ let timer = null;
 let sessionStartMs = 0;
 let running = false;
 
+
 function safeSendStatus(extra = {}) {
   chrome.runtime.sendMessage({
     type: "OFFSCREEN_STATUS",
@@ -103,6 +104,10 @@ async function start({ streamId, wsUrl }) {
         chrome.runtime.sendMessage({ type: "OFFSCREEN_INIT", payload: msg }).catch(() => {});
         return;
       }
+      if (msg.event === "tracks") {
+        chrome.runtime.sendMessage({ type: "OFFSCREEN_TRACKS", payload: msg }).catch(() => {});
+        return;
+      }
       chrome.runtime.sendMessage({ type: "OFFSCREEN_WORD", payload: msg }).catch(() => {});
     } catch {
       // ignore malformed backend messages
@@ -148,6 +153,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     if (msg.type === "OFFSCREEN_STOP") {
       await stop();
+      sendResponse({ ok: true });
+      return;
+    }
+
+    if (msg.type === "OFFSCREEN_SET_NAME") {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          event: "set_name",
+          speaker: msg.speaker,
+          name: msg.name || "",
+        }));
+      }
       sendResponse({ ok: true });
       return;
     }

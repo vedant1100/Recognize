@@ -5,8 +5,6 @@ One-time setup:
   1. pip install -r requirements.txt
   2. Copy asd/talkNet.py from https://github.com/sieve-community/fast-asd
   3. gdown --id 1AbN9fCf9IexMxEKXLQY2KYBlb-IhSEea        # pretrain_TalkSet.model
-  4. Download Vosk model from https://alphacephei.com/vosk/models
-     Unzip as: vosk-model/
 
 Extension → server (incoming):
   binary WebSocket message: JSON bytes {"ts_ms": float, "frame": "<base64 JPEG>"}
@@ -19,6 +17,7 @@ Server → extension (outgoing):
 import asyncio
 import base64
 import json
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -29,20 +28,25 @@ import cv2
 import numpy as np
 import torch
 import uvicorn
+from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from asd.inference import ASDInference, AudioRingBuffer
 from asd.model import load_talknet
-from asr.transcriber import VoskTranscriber
+from asr.transcriber import GroqWhisperTranscriber
 from sync.diarizer import Diarizer
 from tracker.tracker import FaceTracker
 
 # ── config ────────────────────────────────────────────────────────────────────
+DOTENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=DOTENV_PATH, override=False)
+
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
-VOSK_MODEL_PATH = "vosk-model"
 TALKNET_WEIGHTS = "pretrain_TalkSet.model"
 INIT_FRAMES = 30
 ASD_CADENCE_S = 0.2
+BOUNDING_BOXES = os.getenv("BOUNDING_BOXES", "true").strip().lower() == "true"
+TRACKS_EVENT_EVERY_N_FRAMES = 4
 
 SESSION_START_MS = time.monotonic() * 1000
 
@@ -50,12 +54,15 @@ SESSION_START_MS = time.monotonic() * 1000
 tracker: FaceTracker
 asd: ASDInference
 audio_buf: AudioRingBuffer
-transcriber: VoskTranscriber
+transcriber: GroqWhisperTranscriber
 diarizer: Diarizer
 
 _frame_count = 0
 _person_map: dict[str, str] = {}   # track_id -> "person_N", locked at frame 30
+_custom_labels: dict[str, str] = {}  # "person_N" -> custom name
+_latest_visible_named_labels: set[str] = set()
 _person_map_locked = False
+_last_resolved_person = "person_1"
 
 _out_queue: asyncio.Queue = asyncio.Queue()
 _feed_clients: set = set()   # dashboard WebSocket queues
@@ -82,7 +89,8 @@ async def _word_task() -> None:
         if word is None:
             continue
         attributed = diarizer.attribute(word)
-        attributed["speaker"] = _person_map.get(attributed["speaker"], attributed["speaker"])
+        person_label = _resolve_person_label(attributed.get("speaker", "unknown"))
+        attributed["speaker"] = _custom_labels.get(person_label, person_label)
         await _out_queue.put(attributed)
         # Fan-out to dashboard clients
         for q in list(_feed_clients):
@@ -102,7 +110,8 @@ async def lifespan(app: FastAPI):
     talknet_model = load_talknet(TALKNET_WEIGHTS, device=DEVICE)
     asd = ASDInference(talknet_model, device=DEVICE)
     audio_buf = AudioRingBuffer()
-    transcriber = VoskTranscriber(VOSK_MODEL_PATH, audio_buf, session_start_ms=SESSION_START_MS)
+    transcriber = GroqWhisperTranscriber(audio_buf, session_start_ms=SESSION_START_MS)
+    print("[server] ASR backend: Groq Whisper (whisper-large-v3-turbo)")
     diarizer = Diarizer()
 
     transcriber.start()
@@ -137,6 +146,9 @@ async def ws_endpoint(ws: WebSocket) -> None:
         while True:
             raw = await ws.receive_text()
             msg = json.loads(raw)
+            if msg.get("event") == "set_name":
+                _handle_set_name(msg)
+                continue
             jpeg = base64.b64decode(msg["frame"])
             await loop.run_in_executor(_frame_executor, _process_frame, jpeg, float(msg["ts_ms"]))
     except WebSocketDisconnect:
@@ -170,7 +182,9 @@ def _save_transcript(session_words: list[dict]) -> None:
         return
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = Path(__file__).resolve().parent / f"transcript_{ts}.txt"
+    transcripts_dir = Path(__file__).resolve().parent / "transcripts"
+    transcripts_dir.mkdir(exist_ok=True)
+    out_path = transcripts_dir / f"transcript_{ts}.txt"
     with out_path.open("w", encoding="utf-8") as f:
         for row in session_words:
             start_ms = row.get("start_ms")
@@ -182,14 +196,53 @@ def _save_transcript(session_words: list[dict]) -> None:
     print(f"[server] transcript saved: {out_path}")
 
 
+def _handle_set_name(msg: dict) -> None:
+    speaker = str(msg.get("speaker", "")).strip()
+    name = str(msg.get("name", "")).strip()
+    if not speaker.startswith("person_"):
+        return
+    if name:
+        _custom_labels[speaker] = name
+    elif speaker in _custom_labels:
+        del _custom_labels[speaker]
+
+
+def _resolve_person_label(raw_speaker: str) -> str:
+    """
+    Resolve diarizer output to a stable person label and never return 'unknown'.
+    """
+    global _last_resolved_person
+
+    mapped = _person_map.get(raw_speaker, raw_speaker)
+    if isinstance(mapped, str) and mapped.startswith("person_"):
+        _last_resolved_person = mapped
+        return mapped
+
+    # If diarizer emitted unknown/unmapped, continue last known speaker.
+    if _last_resolved_person.startswith("person_"):
+        return _last_resolved_person
+
+    # Fallback to first known person if available.
+    if _person_map:
+        people = sorted(set(_person_map.values()), key=lambda p: int(p.split("_")[1]))
+        if people:
+            _last_resolved_person = people[0]
+            return people[0]
+
+    # Absolute fallback before person map lock.
+    _last_resolved_person = "person_1"
+    return "person_1"
+
+
 # ── frame processing (runs in _frame_executor, single thread) ─────────────────
 
 def _process_frame(jpeg: bytes, ts_ms: float) -> None:
-    global _frame_count, _person_map, _person_map_locked
+    global _frame_count, _person_map, _person_map_locked, _latest_visible_named_labels
 
     frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
     if frame is None:
         return
+    frame_h, frame_w = frame.shape[:2]
 
     tracks = tracker.update(frame, ts_ms)
     asd.push_crops(tracks)
@@ -213,6 +266,31 @@ def _process_frame(jpeg: bytes, ts_ms: float) -> None:
                 n += 1
                 _person_map[t["track_id"]] = f"person_{n}"
             print(f"[server] late-join tracks assigned: { {t['track_id']: _person_map[t['track_id']] for t in new_tracks} }")
+
+    _latest_visible_named_labels = {
+        _custom_labels[_person_map[t["track_id"]]]
+        for t in tracks
+        if t["track_id"] in _person_map and _person_map[t["track_id"]] in _custom_labels
+    }
+
+    if _person_map_locked and (_frame_count % TRACKS_EVENT_EVERY_N_FRAMES == 0):
+        tracks_msg = {
+            "event": "tracks",
+            "bounding_boxes": BOUNDING_BOXES,
+            "frame_w": frame_w,
+            "frame_h": frame_h,
+            "tracks": [
+                {
+                    "track_id": t["track_id"],
+                    "speaker": _person_map.get(t["track_id"], "unknown"),
+                    "name": _custom_labels.get(_person_map.get(t["track_id"], ""), ""),
+                    "bbox": t["bbox"],
+                }
+                for t in tracks
+                if t["track_id"] in _person_map
+            ],
+        }
+        _loop.call_soon_threadsafe(_out_queue.put_nowait, tracks_msg)
 
 
 
