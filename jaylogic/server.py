@@ -1,16 +1,19 @@
 """
 jaylogic diarization server — ws://localhost:8765/ws
 
-One-time setup:
-  1. pip install -r requirements.txt
-  2. Copy asd/talkNet.py from https://github.com/sieve-community/fast-asd
-  3. gdown --id 1AbN9fCf9IexMxEKXLQY2KYBlb-IhSEea        # pretrain_TalkSet.model
+Two independent pipelines:
+  1. Video: MediaPipe Face Mesh → lip movement → who's speaking
+  2. Audio: Groq Whisper → transcribed words
+
+Merge: when a word arrives, look up who was speaking during that window.
 
 Extension → server (incoming):
-  binary WebSocket message: JSON bytes {"ts_ms": float, "frame": "<base64 JPEG>"}
+  JSON: {"ts_ms": float, "frame": "<base64 JPEG>"}
+  JSON: {"type": "audio", "ts_ms": float, "pcm": "<base64 int16>"}
 
 Server → extension (outgoing):
-  {"event": "init", "speakers": ["person_1", ..., "person_N"]}   # sent once at frame 30
+  {"event": "init", "speakers": ["person_1", ..., "person_N"]}
+  {"event": "tracks", ...}
   {"speaker": "person_2", "word": "hello", "start_ms": 1200, "end_ms": 1450}
 """
 
@@ -26,73 +29,56 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import torch
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from asd.inference import ASDInference, AudioRingBuffer
-from asd.model import load_talknet
+from audio_buffer import AudioRingBuffer
 from asr.transcriber import GroqWhisperTranscriber
+from lip.detector import LipSpeakerDetector
 from sync.diarizer import Diarizer
-from tracker.tracker import FaceTracker
 
 # ── config ────────────────────────────────────────────────────────────────────
 DOTENV_PATH = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=DOTENV_PATH, override=False)
 
-DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
-TALKNET_WEIGHTS = "pretrain_TalkSet.model"
 INIT_FRAMES = 30
-ASD_CADENCE_S = 0.2
 BOUNDING_BOXES = os.getenv("BOUNDING_BOXES", "true").strip().lower() == "true"
 TRACKS_EVENT_EVERY_N_FRAMES = 4
+ASR_SAMPLE_RATE = 16000
 
 SESSION_START_MS = time.monotonic() * 1000
 
 # ── globals (assigned in lifespan) ───────────────────────────────────────────
-tracker: FaceTracker
-asd: ASDInference
+lip: LipSpeakerDetector
 audio_buf: AudioRingBuffer
 transcriber: GroqWhisperTranscriber
 diarizer: Diarizer
 
-_frame_count = 0
-_person_map: dict[str, str] = {}   # track_id -> "person_N", locked at frame 30
-_custom_labels: dict[str, str] = {}  # "person_N" -> custom name
-_latest_visible_named_labels: set[str] = set()
-_person_map_locked = False
-_last_resolved_person = "person_1"
+_init_sent = False
+_custom_labels: dict[str, str] = {}
 
 _out_queue: asyncio.Queue = asyncio.Queue()
-_feed_clients: set = set()   # dashboard WebSocket queues
+_feed_clients: set = set()
 _loop: asyncio.AbstractEventLoop
-_frame_executor = ThreadPoolExecutor(max_workers=1)  # serialize frame processing
+_frame_executor = ThreadPoolExecutor(max_workers=1)
+_audio_rate_logged = False
 
 
-# ── background tasks ──────────────────────────────────────────────────────────
-
-async def _asd_task() -> None:
-    loop = asyncio.get_event_loop()
-    while True:
-        await asyncio.sleep(ASD_CADENCE_S)
-        now_ms = time.monotonic() * 1000 - SESSION_START_MS
-        audio = audio_buf.get_window(now_ms - 1000, now_ms)
-        results = await loop.run_in_executor(None, asd.infer, audio, now_ms)
-        diarizer.push_asd(results)
-
+# ── background: word attribution ─────────────────────────────────────────────
 
 async def _word_task() -> None:
+    """Poll transcriber for words, attribute each to a speaker via lip timeline."""
     loop = asyncio.get_event_loop()
     while True:
         word = await loop.run_in_executor(None, transcriber.get_word, 0.05)
         if word is None:
             continue
         attributed = diarizer.attribute(word)
-        person_label = _resolve_person_label(attributed.get("speaker", "unknown"))
-        attributed["speaker"] = _custom_labels.get(person_label, person_label)
+        # Apply custom name labels
+        speaker = attributed.get("speaker", "unknown")
+        attributed["speaker"] = _custom_labels.get(speaker, speaker)
         await _out_queue.put(attributed)
-        # Fan-out to dashboard clients
         for q in list(_feed_clients):
             await q.put(attributed)
 
@@ -101,23 +87,20 @@ async def _word_task() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global tracker, asd, audio_buf, transcriber, diarizer, _loop
+    global lip, audio_buf, transcriber, diarizer, _loop
 
     _loop = asyncio.get_running_loop()
 
-    print(f"[server] loading models on {DEVICE}...")
-    tracker = FaceTracker(det_thresh=0.3, device=DEVICE)
-    talknet_model = load_talknet(TALKNET_WEIGHTS, device=DEVICE)
-    asd = ASDInference(talknet_model, device=DEVICE)
+    print("[server] loading MediaPipe Face Mesh...")
+    lip = LipSpeakerDetector(max_faces=6, mar_window=12, mar_threshold=0.0008)
     audio_buf = AudioRingBuffer()
     transcriber = GroqWhisperTranscriber(audio_buf, session_start_ms=SESSION_START_MS)
+    diarizer = Diarizer(lip)
     print("[server] ASR backend: Groq Whisper (whisper-large-v3-turbo)")
-    diarizer = Diarizer()
 
     transcriber.start()
     print("[server] ready on ws://localhost:8765/ws")
 
-    asyncio.create_task(_asd_task())
     asyncio.create_task(_word_task())
 
     yield
@@ -134,8 +117,8 @@ app = FastAPI(lifespan=lifespan)
 async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     session_words: list[dict] = []
+    global _audio_rate_logged
 
-    # Flush stale messages from a previous connection
     while not _out_queue.empty():
         _out_queue.get_nowait()
 
@@ -146,11 +129,35 @@ async def ws_endpoint(ws: WebSocket) -> None:
         while True:
             raw = await ws.receive_text()
             msg = json.loads(raw)
+
             if msg.get("event") == "set_name":
                 _handle_set_name(msg)
                 continue
+
+            if msg.get("type") == "audio":
+                pcm_b64 = msg.get("pcm")
+                if pcm_b64:
+                    pcm = base64.b64decode(pcm_b64)
+                    sample_rate = int(msg.get("sample_rate", ASR_SAMPLE_RATE))
+                    if sample_rate <= 0:
+                        raise ValueError(f"invalid sample_rate={sample_rate}")
+                    if not _audio_rate_logged:
+                        # Log first audio chunk details
+                        samples = np.frombuffer(pcm, dtype=np.int16)
+                        peak = int(np.max(np.abs(samples))) if len(samples) > 0 else 0
+                        print(f"[server] incoming audio: rate={sample_rate}Hz, "
+                              f"samples={len(samples)}, peak={peak}/32768, "
+                              f"needs_resample={sample_rate != ASR_SAMPLE_RATE}")
+                        _audio_rate_logged = True
+                    if sample_rate != ASR_SAMPLE_RATE:
+                        pcm = _resample_pcm_int16(pcm, from_rate=sample_rate, to_rate=ASR_SAMPLE_RATE)
+                    transcriber.ingest_pcm(pcm, float(msg.get("ts_ms", 0.0)))
+                continue
+
+            # Video frame
             jpeg = base64.b64decode(msg["frame"])
             await loop.run_in_executor(_frame_executor, _process_frame, jpeg, float(msg["ts_ms"]))
+
     except WebSocketDisconnect:
         pass
     finally:
@@ -162,18 +169,16 @@ async def _drain_to(ws: WebSocket, session_words: list[dict]) -> None:
     while True:
         msg = await _out_queue.get()
         if "word" in msg:
-            session_words.append(
-                {
-                    "speaker": msg.get("speaker", "unknown"),
-                    "word": msg.get("word", ""),
-                    "start_ms": msg.get("start_ms"),
-                    "end_ms": msg.get("end_ms"),
-                }
-            )
+            session_words.append({
+                "speaker": msg.get("speaker", "unknown"),
+                "word": msg.get("word", ""),
+                "start_ms": msg.get("start_ms"),
+                "end_ms": msg.get("end_ms"),
+            })
         try:
             await ws.send_text(json.dumps(msg))
         except Exception:
-            break  # connection gone; drop the message
+            break
 
 
 def _save_transcript(session_words: list[dict]) -> None:
@@ -203,77 +208,55 @@ def _handle_set_name(msg: dict) -> None:
         return
     if name:
         _custom_labels[speaker] = name
-    elif speaker in _custom_labels:
-        del _custom_labels[speaker]
+        lip.set_name(speaker, name)
+    else:
+        _custom_labels.pop(speaker, None)
+        lip.set_name(speaker, "")
 
 
-def _resolve_person_label(raw_speaker: str) -> str:
-    """
-    Resolve diarizer output to a stable person label and never return 'unknown'.
-    """
-    global _last_resolved_person
-
-    mapped = _person_map.get(raw_speaker, raw_speaker)
-    if isinstance(mapped, str) and mapped.startswith("person_"):
-        _last_resolved_person = mapped
-        return mapped
-
-    # If diarizer emitted unknown/unmapped, continue last known speaker.
-    if _last_resolved_person.startswith("person_"):
-        return _last_resolved_person
-
-    # Fallback to first known person if available.
-    if _person_map:
-        people = sorted(set(_person_map.values()), key=lambda p: int(p.split("_")[1]))
-        if people:
-            _last_resolved_person = people[0]
-            return people[0]
-
-    # Absolute fallback before person map lock.
-    _last_resolved_person = "person_1"
-    return "person_1"
+def _resample_pcm_int16(pcm_bytes: bytes, from_rate: int, to_rate: int) -> bytes:
+    if from_rate == to_rate:
+        return pcm_bytes
+    samples = np.frombuffer(pcm_bytes, dtype=np.int16)
+    if samples.size == 0:
+        return pcm_bytes
+    out_len = int(round(samples.size * (float(to_rate) / float(from_rate))))
+    if out_len <= 1:
+        return np.zeros(1, dtype=np.int16).tobytes()
+    x_old = np.arange(samples.size, dtype=np.float64)
+    x_new = np.linspace(0.0, float(samples.size - 1), out_len, dtype=np.float64)
+    out = np.interp(x_new, x_old, samples.astype(np.float64))
+    out = np.clip(out, -32768.0, 32767.0).astype(np.int16)
+    return out.tobytes()
 
 
-# ── frame processing (runs in _frame_executor, single thread) ─────────────────
+# ── frame processing (runs in _frame_executor) ───────────────────────────────
 
 def _process_frame(jpeg: bytes, ts_ms: float) -> None:
-    global _frame_count, _person_map, _person_map_locked, _latest_visible_named_labels
+    global _init_sent
 
     frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
     if frame is None:
         return
+
     frame_h, frame_w = frame.shape[:2]
+    # Use server's own clock so lip timeline matches transcriber timestamps
+    server_ts_ms = time.monotonic() * 1000 - SESSION_START_MS
+    result = lip.process_frame(frame, server_ts_ms)
 
-    tracks = tracker.update(frame, ts_ms)
-    asd.push_crops(tracks)
-    _frame_count += 1
-
-    if not _person_map_locked and _frame_count >= INIT_FRAMES and tracks:
-        sorted_tracks = sorted(tracks, key=lambda t: t["bbox"][0])
-        _person_map = {t["track_id"]: f"person_{i + 1}" for i, t in enumerate(sorted_tracks)}
-        _person_map_locked = True
-        init_msg = {"event": "init", "speakers": list(_person_map.values())}
+    # Send init event once after person map is locked
+    if not _init_sent and lip.is_locked():
+        speakers = lip.get_speakers()
+        init_msg = {"event": "init", "speakers": speakers}
         _loop.call_soon_threadsafe(_out_queue.put_nowait, init_msg)
         for q in list(_feed_clients):
             _loop.call_soon_threadsafe(q.put_nowait, init_msg)
-        print(f"[server] locked person map: {_person_map}")
-    elif _person_map_locked and tracks:
-        # Assign labels to track IDs that appeared after initialization (late joins)
-        new_tracks = [t for t in tracks if t["track_id"] not in _person_map]
-        if new_tracks:
-            n = len(_person_map)
-            for t in new_tracks:
-                n += 1
-                _person_map[t["track_id"]] = f"person_{n}"
-            print(f"[server] late-join tracks assigned: { {t['track_id']: _person_map[t['track_id']] for t in new_tracks} }")
+        _init_sent = True
+        print(f"[server] locked person map: {speakers}")
 
-    _latest_visible_named_labels = {
-        _custom_labels[_person_map[t["track_id"]]]
-        for t in tracks
-        if t["track_id"] in _person_map and _person_map[t["track_id"]] in _custom_labels
-    }
-
-    if _person_map_locked and (_frame_count % TRACKS_EVENT_EVERY_N_FRAMES == 0):
+    # Periodic tracks event for bounding box overlay + face count
+    fc = result.get("frame_count", 0)
+    if fc % TRACKS_EVENT_EVERY_N_FRAMES == 0:
         tracks_msg = {
             "event": "tracks",
             "bounding_boxes": BOUNDING_BOXES,
@@ -282,19 +265,18 @@ def _process_frame(jpeg: bytes, ts_ms: float) -> None:
             "tracks": [
                 {
                     "track_id": t["track_id"],
-                    "speaker": _person_map.get(t["track_id"], "unknown"),
-                    "name": _custom_labels.get(_person_map.get(t["track_id"], ""), ""),
+                    "speaker": t["speaker"],
+                    "name": t.get("name", ""),
                     "bbox": t["bbox"],
+                    "is_speaking": t.get("is_speaking", False),
                 }
-                for t in tracks
-                if t["track_id"] in _person_map
+                for t in result["tracks"]
             ],
         }
         _loop.call_soon_threadsafe(_out_queue.put_nowait, tracks_msg)
 
 
-
-# ── Dashboard feed (read-only WebSocket for the React frontend) ───────────────
+# ── Dashboard feed ────────────────────────────────────────────────────────────
 
 @app.websocket("/feed")
 async def feed_endpoint(ws: WebSocket) -> None:
@@ -311,7 +293,7 @@ async def feed_endpoint(ws: WebSocket) -> None:
         _feed_clients.discard(q)
 
 
-# ── CORS (allow React dev server at localhost:5173) ───────────────────────────
+# ── CORS ──────────────────────────────────────────────────────────────────────
 
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 

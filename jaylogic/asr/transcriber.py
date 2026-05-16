@@ -6,6 +6,7 @@ import time
 import wave
 from typing import Any
 
+import numpy as np
 import requests
 import sounddevice as sd
 
@@ -53,6 +54,10 @@ class BaseMicrophoneTranscriber:
 
         self._audio_buf.push(pcm_bytes, ts_ms)
         self._process_chunk(pcm_bytes, ts_ms)
+
+    def ingest_pcm(self, pcm_bytes: bytes, ts_ms: float) -> None:
+        """Accept externally-captured 16kHz mono int16 PCM."""
+        self._push(pcm_bytes, ts_ms)
 
     def _process_chunk(self, pcm_bytes: bytes, ts_ms: float) -> None:
         raise NotImplementedError
@@ -103,6 +108,9 @@ class GroqWhisperTranscriber(BaseMicrophoneTranscriber):
         self._request_jobs: queue.Queue = queue.Queue()
         self._stop_event = threading.Event()
         self._worker_thread: threading.Thread | None = None
+        self._capture_microphone = (
+            os.getenv("CAPTURE_MICROPHONE", "false").strip().lower() == "true"
+        )
 
     def start(self) -> None:
         self._stop_event.clear()
@@ -112,11 +120,19 @@ class GroqWhisperTranscriber(BaseMicrophoneTranscriber):
             daemon=True,
         )
         self._worker_thread.start()
-        super().start()
+        if self._capture_microphone:
+            super().start()
 
     def _process_chunk(self, pcm_bytes: bytes, ts_ms: float) -> None:
         with self._lock:
             self._pcm_accum.extend(pcm_bytes)
+
+        # Log first chunk to verify mic is working
+        if self._first_audio_ts is not None and not hasattr(self, '_mic_logged'):
+            samples = np.frombuffer(pcm_bytes, dtype=np.int16)
+            peak = int(np.max(np.abs(samples))) if len(samples) > 0 else 0
+            print(f"[asr] first mic chunk: {len(samples)} samples, peak={peak}/32768")
+            self._mic_logged = True
 
         now = time.monotonic()
         if now < self._cooldown_until:
@@ -135,7 +151,12 @@ class GroqWhisperTranscriber(BaseMicrophoneTranscriber):
         if self._worker_thread is not None:
             self._worker_thread.join(timeout=2.0)
             self._worker_thread = None
-        super().stop()
+        if self._capture_microphone:
+            super().stop()
+
+    @property
+    def window_ms(self) -> float:
+        return self._window_s * 1000.0
 
     def _enqueue_window(self, force: bool = False) -> None:
         if self._request_jobs.qsize() >= self._max_pending_jobs and not force:
@@ -145,16 +166,28 @@ class GroqWhisperTranscriber(BaseMicrophoneTranscriber):
             max_bytes = int(SAMPLE_RATE * 2 * self._window_s)
             if not force and len(self._pcm_accum) < int(SAMPLE_RATE * 2 * 1.0):
                 return
+            if len(self._pcm_accum) < int(SAMPLE_RATE * 2 * 0.1):  # Groq requires >0.1s
+                return
             if len(self._pcm_accum) > max_bytes:
                 window_pcm = bytes(self._pcm_accum[-max_bytes:])
             else:
                 window_pcm = bytes(self._pcm_accum)
+            # Keep 1s of overlap for context continuity, trim the rest
+            keep_bytes = int(SAMPLE_RATE * 2 * 1.0)
+            if len(self._pcm_accum) > keep_bytes:
+                self._pcm_accum = bytearray(self._pcm_accum[-keep_bytes:])
+
+        # Skip silent audio — prevents Whisper hallucinations
+        samples = np.frombuffer(window_pcm, dtype=np.int16)
+        peak = int(np.max(np.abs(samples))) if len(samples) > 0 else 0
+        if peak < 200:
+            return
 
         audio_end_ms = time.monotonic() * 1000 - self._session_start_ms
         audio_len_ms = (len(window_pcm) / 2 / SAMPLE_RATE) * 1000.0
         audio_start_ms = max(0.0, audio_end_ms - audio_len_ms)
-        if audio_end_ms <= self._last_uploaded_audio_end_ms and not force:
-            return
+
+        print(f"[asr] sending {audio_len_ms:.0f}ms audio to Groq (peak={peak})")
 
         self._request_jobs.put(
             {
@@ -179,6 +212,9 @@ class GroqWhisperTranscriber(BaseMicrophoneTranscriber):
             if payload is None:
                 continue
 
+            text = payload.get("text", "").strip()
+            print(f"[asr] Groq returned: '{text[:80]}'")
+
             self._emit_from_payload(payload, job["audio_start_ms"])
             self._last_uploaded_audio_end_ms = job["audio_end_ms"]
 
@@ -191,6 +227,7 @@ class GroqWhisperTranscriber(BaseMicrophoneTranscriber):
             "language": self._language,
             "response_format": "verbose_json",
             "timestamp_granularities[]": "word",
+            "prompt": "Meeting transcription. Multiple speakers in a conference room.",
         }
 
         resp = requests.post(self._endpoint, headers=headers, files=files, data=data, timeout=45)
@@ -265,7 +302,8 @@ class GroqWhisperTranscriber(BaseMicrophoneTranscriber):
             return
 
         # Fallback when API response has no word-level timestamps.
-        for seg in payload.get("segments", []):
+        segments = payload.get("segments") or []
+        for seg in segments:
             text = (seg.get("text") or "").strip()
             if not text:
                 continue

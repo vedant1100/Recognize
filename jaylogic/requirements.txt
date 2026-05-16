@@ -1,8 +1,4 @@
-insightface>=0.7.3
-onnxruntime>=1.16.0
-boxmot>=10.0.43
-torch>=2.1.0
-python_speech_features
+mediapipe>=0.10.9
 sounddevice
 fastapi
 uvicorn[standard]

@@ -1,5 +1,6 @@
 const FPS = 12;
 const JPEG_QUALITY = 0.6;
+const AUDIO_BUFFER_SIZE = 4096;
 
 const videoEl = document.getElementById("v");
 const canvasEl = document.getElementById("c");
@@ -10,6 +11,9 @@ let ws = null;
 let timer = null;
 let sessionStartMs = 0;
 let running = false;
+let audioCtx = null;
+let sourceNode = null;
+let processorNode = null;
 
 
 function safeSendStatus(extra = {}) {
@@ -34,6 +38,27 @@ function cleanupMedia() {
     mediaStream = null;
   }
 
+  if (processorNode) {
+    try {
+      processorNode.disconnect();
+    } catch {
+      // ignore
+    }
+    processorNode = null;
+  }
+  if (sourceNode) {
+    try {
+      sourceNode.disconnect();
+    } catch {
+      // ignore
+    }
+    sourceNode = null;
+  }
+  if (audioCtx) {
+    audioCtx.close().catch(() => {});
+    audioCtx = null;
+  }
+
   videoEl.srcObject = null;
 }
 
@@ -52,7 +77,12 @@ async function start({ streamId, wsUrl }) {
   await stop();
 
   const constraints = {
-    audio: false,
+    audio: {
+      mandatory: {
+        chromeMediaSource: "tab",
+        chromeMediaSourceId: streamId
+      }
+    },
     video: {
       mandatory: {
         chromeMediaSource: "tab",
@@ -68,7 +98,7 @@ async function start({ streamId, wsUrl }) {
   ws = new WebSocket(wsUrl);
   sessionStartMs = performance.now();
 
-  ws.onopen = () => {
+  ws.onopen = async () => {
     running = true;
     safeSendStatus();
 
@@ -95,6 +125,8 @@ async function start({ streamId, wsUrl }) {
       };
       ws.send(JSON.stringify(payload));
     }, intervalMs);
+
+    // Audio capture removed — server captures microphone directly via sounddevice.
   };
 
   ws.onmessage = (event) => {

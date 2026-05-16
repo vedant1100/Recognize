@@ -1,124 +1,206 @@
-if (window.__jaylogicContentLoaded) {
-  // Already initialized for this tab/frame.
-} else {
+/**
+ * Jaylogic Content Script
+ * Auto-starts screen capture on page load, streams video frames to the local server,
+ * and displays an always-visible UI panel with face counts and transcripts.
+ */
+
+if (!window.__jaylogicContentLoaded) {
   window.__jaylogicContentLoaded = true;
 
-  let overlayRoot = null;
-  const speakerNodes = new Map();
-  let lastRenderTs = 0;
+  // ── State ─────────────────────────────────────────────────────────────────
+  let isRecording = false;
+  let captureStream = null;
+  let ws = null;
+  let wsConnected = false;
+  let frameLoopId = null;
+  let hiddenVideo = null;
+  let frameCanvas = null;
+  let frameCtx = null;
+  
+  let faceCount = 0;
+  let lastSpeaker = null;
 
-  function ensureOverlay() {
-    if (overlayRoot) return overlayRoot;
-    overlayRoot = document.createElement("div");
-    overlayRoot.id = "jaylogic-overlay";
-    document.documentElement.appendChild(overlayRoot);
-    return overlayRoot;
+  // ── DOM Setup ─────────────────────────────────────────────────────────────
+  let overlayRoot = document.createElement("div");
+  overlayRoot.id = "jaylogic-overlay";
+  document.documentElement.appendChild(overlayRoot);
+
+  const panel = document.createElement("div");
+  panel.id = "jaylogic-panel";
+  panel.innerHTML = `
+    <div class="jl-header">
+      <span class="jl-title">Jaylogic</span>
+      <span class="jl-status disconnected" id="jl-status">Offline</span>
+    </div>
+    <div class="jl-body">
+      <div class="jl-stat">
+        <span class="jl-stat-label">People detected</span>
+        <span class="jl-stat-value" id="jl-face-count">0</span>
+      </div>
+    </div>
+    <div class="jl-transcript" id="jl-transcript"></div>
+  `;
+  overlayRoot.appendChild(panel);
+
+  function setStatus(connected) {
+    const statusEl = document.getElementById("jl-status");
+    if (!statusEl) return;
+    if (connected) {
+      statusEl.textContent = "Live";
+      statusEl.className = "jl-status connected";
+    } else {
+      statusEl.textContent = "Offline";
+      statusEl.className = "jl-status disconnected";
+    }
   }
 
-  function ensureSpeakerNode(speaker, name) {
-    const root = ensureOverlay();
-    let node = speakerNodes.get(speaker);
-    if (node) return node;
+  function appendTranscript(speaker, word) {
+    const container = document.getElementById("jl-transcript");
+    if (!container) return;
 
-    const box = document.createElement("div");
-    box.className = "jaylogic-box";
+    if (lastSpeaker === speaker) {
+      const last = container.lastElementChild;
+      if (last) {
+        const textSpan = last.querySelector(".text");
+        textSpan.textContent += " " + word;
+        container.scrollTop = container.scrollHeight;
+        return;
+      }
+    }
 
-    const wrap = document.createElement("div");
-    wrap.className = "jaylogic-name-wrap";
+    const div = document.createElement("div");
+    div.className = "jl-word";
+    div.innerHTML = `<span class="speaker">${speaker}:</span> <span class="text">${word}</span>`;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+    lastSpeaker = speaker;
+  }
 
-    const input = document.createElement("input");
-    input.className = "jaylogic-name-input";
-    input.type = "text";
-    input.placeholder = speaker;
-    input.value = name || "";
-    input.addEventListener("change", () => {
-      chrome.runtime.sendMessage({
-        type: "CONTENT_SET_NAME",
-        speaker,
-        name: input.value.trim(),
-      }).catch(() => {});
+  // ── WebSocket ─────────────────────────────────────────────────────────────
+  function connectWS() {
+    try {
+      ws = new WebSocket("ws://localhost:8765/ws");
+    } catch (e) {
+      console.warn("[jaylogic] WS connect failed:", e);
+      return;
+    }
+
+    ws.onopen = () => {
+      wsConnected = true;
+      setStatus(true);
+      console.log("[jaylogic] Connected to server");
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+
+        // Update face count from tracks
+        if (msg.event === "tracks") {
+          const count = msg.tracks ? msg.tracks.length : 0;
+          if (count !== faceCount) {
+            faceCount = count;
+            document.getElementById("jl-face-count").textContent = count;
+          }
+        }
+
+        // Init event — speakers locked
+        if (msg.event === "init") {
+          faceCount = msg.speakers ? msg.speakers.length : 0;
+          document.getElementById("jl-face-count").textContent = faceCount;
+        }
+
+        // Transcribed word
+        if (msg.speaker && msg.word) {
+          appendTranscript(msg.speaker, msg.word);
+        }
+      } catch (_) {}
+    };
+
+    ws.onclose = () => {
+      wsConnected = false;
+      setStatus(false);
+    };
+
+    ws.onerror = () => { wsConnected = false; };
+  }
+
+  function stopWS() {
+    if (frameLoopId) {
+      clearInterval(frameLoopId);
+      frameLoopId = null;
+    }
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+    wsConnected = false;
+    setStatus(false);
+  }
+
+  // ── Frame Capture ─────────────────────────────────────────────────────────
+  function startFrameCapture() {
+    hiddenVideo = document.createElement("video");
+    hiddenVideo.srcObject = captureStream;
+    hiddenVideo.muted = true;
+    hiddenVideo.autoplay = true;
+    hiddenVideo.style.cssText = "position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;top:0;left:0";
+    document.body.appendChild(hiddenVideo);
+
+    frameCanvas = document.createElement("canvas");
+    frameCanvas.width = 640;
+    frameCanvas.height = 360;
+    frameCtx = frameCanvas.getContext("2d");
+
+    hiddenVideo.addEventListener("loadedmetadata", () => {
+      hiddenVideo.play().catch(() => {});
+      // Send 10 frames per second to match lip pipeline requirement
+      frameLoopId = setInterval(sendFrame, 100);
     });
-
-    wrap.appendChild(input);
-    root.appendChild(box);
-    root.appendChild(wrap);
-
-    node = { box, wrap, input, lastSeenMs: Date.now() };
-    speakerNodes.set(speaker, node);
-    return node;
   }
 
-  function renderTracks(payload) {
-    if (!payload || !Array.isArray(payload.tracks)) return;
+  function sendFrame() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!hiddenVideo || hiddenVideo.readyState < 2) return;
+    try {
+      frameCtx.drawImage(hiddenVideo, 0, 0, 640, 360);
+      const dataUrl = frameCanvas.toDataURL("image/jpeg", 0.6);
+      const base64 = dataUrl.split(",")[1];
+      ws.send(JSON.stringify({ ts_ms: Date.now(), frame: base64 }));
+    } catch (_) {}
+  }
 
-    const nowTs = performance.now();
-    if (nowTs - lastRenderTs < 120) return; // throttle DOM updates
-    lastRenderTs = nowTs;
+  // ── Recording ─────────────────────────────────────────────────────────────
+  async function autostartCapture() {
+    try {
+      console.log("[jaylogic] Requesting tab capture...");
+      captureStream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          displaySurface: "browser",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 15 },
+        },
+        audio: false, // Server captures mic directly
+        preferCurrentTab: true,
+      });
 
-    const showBoxes = payload.bounding_boxes !== false;
-    const frameW = Number(payload.frame_w) || window.innerWidth;
-    const frameH = Number(payload.frame_h) || window.innerHeight;
-    const scaleX = window.innerWidth / frameW;
-    const scaleY = window.innerHeight / frameH;
-    const seen = new Set();
+      if (!captureStream) throw new Error("Screen share cancelled");
 
-    for (const t of payload.tracks) {
-      const speaker = t.speaker;
-      if (!speaker || speaker === "unknown") continue;
+      captureStream.getVideoTracks()[0].addEventListener("ended", () => {
+        stopWS();
+        isRecording = false;
+      });
 
-      const bbox = t.bbox || [0, 0, 0, 0];
-      const x = Number(bbox[0]) || 0;
-      const y = Number(bbox[1]) || 0;
-      const w = Number(bbox[2]) || 0;
-      const h = Number(bbox[3]) || 0;
-
-      const node = ensureSpeakerNode(speaker, t.name || "");
-      const px = Math.max(0, Math.round((x + w / 2) * scaleX - 65));
-      const py = Math.max(0, Math.round(y * scaleY - 30));
-      const bx = Math.max(0, Math.round(x * scaleX));
-      const by = Math.max(0, Math.round(y * scaleY));
-      const bw = Math.max(2, Math.round(w * scaleX));
-      const bh = Math.max(2, Math.round(h * scaleY));
-
-      node.wrap.style.transform = `translate(${px}px, ${py}px)`;
-      node.box.style.transform = `translate(${bx}px, ${by}px)`;
-      node.box.style.width = `${bw}px`;
-      node.box.style.height = `${bh}px`;
-      node.lastSeenMs = Date.now();
-      node.wrap.style.display = "block";
-      node.box.style.display = showBoxes ? "block" : "none";
-
-      if ((!document.activeElement || document.activeElement !== node.input) && t.name && node.input.value !== t.name) {
-        node.input.value = t.name;
-      }
-
-      seen.add(speaker);
-    }
-
-    const now = Date.now();
-    for (const [speaker, node] of speakerNodes.entries()) {
-      if (!seen.has(speaker) && now - node.lastSeenMs > 2500) {
-        node.wrap.style.display = "none";
-        node.box.style.display = "none";
-      }
+      connectWS();
+      startFrameCapture();
+      isRecording = true;
+      console.log("[jaylogic] Stream started automatically.");
+    } catch (error) {
+      console.error("[jaylogic] Autostart failed:", error);
     }
   }
 
-  function setRunning(running) {
-    if (!overlayRoot) return;
-    overlayRoot.style.display = running ? "block" : "none";
-  }
-
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg.type === "TRACKS" && msg.payload) {
-      renderTracks(msg.payload);
-    }
-    if (msg.type === "STATE") {
-      setRunning(!!msg.running);
-    }
-    if (msg.type === "PING_CONTENT") {
-      sendResponse({ ok: true, loaded: true });
-    }
-    return true;
-  });
+  // Autostart when loaded
+  setTimeout(autostartCapture, 1000);
 }

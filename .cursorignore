@@ -1,0 +1,15 @@
+# Large directories that spike the extension host CPU
+node_modules/
+jaylogic/vosk-model/
+
+# ML model caches
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Generated transcript files
+jaylogic/transcripts/
+
+# Build artifacts
+dist/
+build/

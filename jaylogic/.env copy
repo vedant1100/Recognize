@@ -1,0 +1,18 @@
+# ASR backend switch
+# true  -> Groq Whisper
+# false -> local Vosk
+useWhisper=true
+
+# Required when useWhisper=true
+GROQ_API_KEY=
+
+# Whisper config
+WHISPER_MODEL=whisper-large-v3-turbo
+WHISPER_LANGUAGE=en
+WHISPER_WINDOW_S=5.0
+WHISPER_STRIDE_S=4
+WHISPER_DEDUPE_MARGIN_MS=60
+WHISPER_MAX_RETRIES=3
+WHISPER_MAX_PENDING_JOBS=2
+
+BOUNDING_BOXES=true
