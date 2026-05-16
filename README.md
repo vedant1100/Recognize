@@ -1,5 +1,8 @@
 # 🧠 Recognize - AI-Powered Meeting Intelligence Platform
 
+
+<img width="1280" height="831" alt="image" src="https://github.com/user-attachments/assets/6cce3d4f-7356-4382-b1e0-93318f85e317" />
+
 > **Transform your meetings into actionable knowledge graphs with AI-powered entity extraction and semantic search**
 
 [![Built with Groq](https://img.shields.io/badge/Built%20with-Groq-orange)](https://groq.com/)
