@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+neo4j
+sentence-transformers
+anthropic
+pypdf
+python-docx
+python-multipart
+numpy
+networkx

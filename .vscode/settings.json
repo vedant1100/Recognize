@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "./meetingmind/agents/graph_agent"
+    ]
+}
