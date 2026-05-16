@@ -2,6 +2,8 @@
 
 
 <img width="1280" height="831" alt="image" src="https://github.com/user-attachments/assets/6cce3d4f-7356-4382-b1e0-93318f85e317" />
+<img width="1280" height="724" alt="image" src="https://github.com/user-attachments/assets/2c7cfd44-5fac-4fd9-be5a-1d1a923d2886" />
+
 
 > **Transform your meetings into actionable knowledge graphs with AI-powered entity extraction and semantic search**
 
@@ -9,7 +11,7 @@
 [![Neo4j](https://img.shields.io/badge/Database-Neo4j-blue)](https://neo4j.com/)
 [![React](https://img.shields.io/badge/Frontend-React-61dafb)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688)](https://fastapi.tiangolo.com/)
-[![Deployed on Zeabur](https://img.shields.io/badge/Deployed%20on-Zeabur-black)](https://zeabur.com/)
+[![Deployed on Zeabur](https://img.shields.io/badge/Deployed%20on-Zeabur-black)](https://zeabur.com(In Process)
 
 ---
 
@@ -157,43 +159,25 @@ Meeting Transcript → AI Entity Extraction → Knowledge Graph → Semantic Sea
 
 ## 🏆 Hackathon Sponsor Tools Integration
 
-We've integrated **6 sponsor tools** to build a production-ready platform:
+We've integrated **2 sponsor tools** to build a production-ready platform:
 
-### 1. **[Groq](https://groq.com/)** ⚡ (Primary AI Engine)
-**Usage**: Entity extraction, query answering, text summarization  
-**Why**: 10x faster inference than traditional LLMs (300+ tokens/sec on Llama 3.3 70B)  
-**Impact**: Real-time processing of meeting transcripts with 92-95% accuracy  
-**Integration**: Core LLM engine for all AI operations
 
-### 2. **[Neo4j](https://neo4j.com/)** 🗄️ (Knowledge Graph Database)
-**Usage**: Store entities, relationships, and vector embeddings  
-**Why**: Native graph database with Cypher query language and vector search  
-**Impact**: Semantic search across millions of nodes with sub-second latency  
-**Integration**: Primary database for all knowledge graph operations
 
-### 3. **[Zeabur](https://zeabur.com/)** 🚀 (Deployment Platform)
+
+### 1. **[Zeabur](https://zeabur.com/)** 🚀 (Deployment Platform)
 **Usage**: One-click deployment for production  
 **Why**: Simplified DevOps with automatic scaling and zero configuration  
 **Impact**: Deploy in <5 minutes with auto-scaling based on traffic  
 **Integration**: Hosting for both frontend and backend services
 
-### 4. **[AgentField](https://agentfield.ai/)** 🤖 (Multi-Agent Orchestration)
-**Usage**: Async agent swarm for document processing pipeline  
-**Why**: Parallel processing with shared memory and agent coordination  
-**Impact**: 5 specialized agents working in parallel (processor, extractor, builder, query handler, orchestrator)  
-**Integration**: Backend processing pipeline for scalable document handling
 
-### 5. **[TokenRouter](https://tokenrouter.ai/)** 🔀 (Model Routing & Optimization)
+### 2. **[TokenRouter](https://tokenrouter.ai/)** 🔀 (Model Routing & Optimization)
 **Usage**: Smart routing between AI models with caching and fallback  
 **Why**: Cost optimization and reliability with automatic failover  
 **Impact**: 40% cost reduction with response caching, 99.9% uptime with fallback models  
 **Integration**: LLM request routing layer for production reliability
 
-### 6. **[Evermind](https://evermind.ai/)** 🧠 (Persistent Memory)
-**Usage**: Cross-meeting context retention and learning  
-**Why**: System learns from past meetings to provide better answers  
-**Impact**: Smarter answers with historical context, improved accuracy over time  
-**Integration**: Memory layer for context-aware query responses
+
 
 ---
 
