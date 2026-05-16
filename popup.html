@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 240px;
+      background: #1e1e2e;
+      color: white;
+      font-family: 'Google Sans', 'Roboto', sans-serif;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .logo {
+      width: 32px;
+      height: 32px;
+      background: #1a73e8;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 16px;
+    }
+    .title { font-size: 16px; font-weight: 600; }
+    .subtitle { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 1px; }
+    .status-card {
+      background: rgba(255,255,255,0.05);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: rgba(255,255,255,0.5);
+      margin-bottom: 4px;
+    }
+    .status-row:last-child { margin-bottom: 0; }
+    .status-row strong { color: rgba(255,255,255,0.85); }
+    .hint {
+      font-size: 12px;
+      color: rgba(255,255,255,0.3);
+      text-align: center;
+      line-height: 1.5;
+    }
+    .hint a {
+      color: #1a73e8;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">M</div>
+    <div>
+      <div class="title">Meetlytics</div>
+      <div class="subtitle">Meeting Intelligence</div>
+    </div>
+  </div>
+
+  <div class="status-card">
+    <div class="status-row">
+      <span>Status</span>
+      <strong id="status">Ready</strong>
+    </div>
+    <div class="status-row">
+      <span>Active on</span>
+      <strong>Google Meet</strong>
+    </div>
+  </div>
+
+  <p class="hint">
+    Open a <a href="https://meet.google.com" target="_blank">Google Meet</a> and click the <strong>M</strong> button to start tracking.
+  </p>
+
+  <script src="popup.js"></script>
+</body>
+</html>
