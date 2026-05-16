@@ -141,7 +141,7 @@ Meeting Transcript → AI Entity Extraction → Knowledge Graph → Semantic Sea
 - **[Vite](https://vitejs.dev/)** - Fast build tool and dev server
 
 ### **DevOps & Deployment**
-- **[Zeabur](https://zeabur.com/)** 🚀 - One-click deployment platform
+
 - **Docker** - Containerization for consistent deployments
 - **Neo4j Aura** - Cloud-hosted Neo4j database
 
@@ -387,18 +387,16 @@ MIT License - see [LICENSE](LICENSE) for details
 Special thanks to our hackathon sponsors:
 - **Groq** for blazing-fast LLM inference
 - **Neo4j** for powerful graph database technology
-- **Zeabur** for seamless deployment
+
 - **AgentField** for multi-agent orchestration
 - **TokenRouter** for smart model routing
 - **Evermind** for persistent memory capabilities
 
----
 
-## 📞 Contact
 
 - **GitHub**: [github.com/vedant1100/Recognize](https://github.com/vedant1100/Recognize)
-- **Demo**: [Your Zeabur URL]
-- **Email**: team@recognize.ai
+
+
 
 ---
 
