@@ -200,6 +200,9 @@
       setStatus("Recording in progress", "recording");
       timerInterval = setInterval(updateTimer, 1000);
 
+      // Hide extension UI so it doesn't appear in the recording
+      root.style.display = "none";
+
       const audioNote = hasAudio ? "" : " (no audio)";
       console.log("[Meetlytics] Recording started:", mimeType, audioNote);
 
@@ -226,6 +229,9 @@
 
     isRecording = false;
     clearInterval(timerInterval);
+
+    // Bring the UI back
+    root.style.display = "";
 
     recordBtn.innerHTML = `<span class="ml-btn-icon">●</span> Start Recording`;
     recordBtn.classList.remove("recording");
