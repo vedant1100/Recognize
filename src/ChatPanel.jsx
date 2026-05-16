@@ -1,10 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { useStore } from './store'
 import { api } from './api'
-
-function escHtml(str) {
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-}
 
 function Message({ msg, onSourceClick }) {
   if (msg.role === 'thinking') {
@@ -32,10 +29,9 @@ function Message({ msg, onSourceClick }) {
           {msg.mode === 'global' ? '⬡ GLOBAL' : '◈ LOCAL'} · GraphRAG
         </div>
       )}
-      <div
-        className="bubble"
-        dangerouslySetInnerHTML={{ __html: escHtml(msg.text).replace(/\n/g, '<br>') }}
-      />
+      <div className="bubble markdown">
+        <ReactMarkdown>{msg.text}</ReactMarkdown>
+      </div>
       {msg.sources?.length > 0 && (
         <div className="sources">
           {msg.sources.map((s, i) => (
