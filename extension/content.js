@@ -1,13 +1,12 @@
 /**
  * Meetlytics Content Script
- * Uses getDisplayMedia to capture full meeting video + audio.
- * Records to MP4/WebM, downloads on stop.
+ * Records full meeting + streams to jaylogic for live speaker diarization.
  */
 
 (function () {
   if (document.getElementById("meetlytics-root")) return;
 
-  // ── State ────────────────────────────────────────────────────────────────
+  // ── State ─────────────────────────────────────────────────────────────────
   let isRecording = false;
   let isPanelOpen = false;
   let recordingStartTime = null;
@@ -15,11 +14,21 @@
   let participants = [];
   let mediaRecorder = null;
   let audioChunks = [];
-  let captureStream = null;  // keep reference for full cleanup
-  let micStream = null;      // separate mic stream for cleanup
-  let audioCtx = null;       // AudioContext for mixing
+  let captureStream = null;
+  let micStream = null;
+  let audioCtx = null;
 
-  // ── Create DOM ───────────────────────────────────────────────────────────
+  // Jaylogic WS
+  let ws = null;
+  let wsConnected = false;
+  let frameLoopId = null;
+  let hiddenVideo = null;
+  let frameCanvas = null;
+  let frameCtx = null;
+  let pcmAudioCtx = null;
+  let wsWords = []; // [{speaker, word, ts}]
+
+  // ── Create DOM ────────────────────────────────────────────────────────────
   const root = document.createElement("div");
   root.id = "meetlytics-root";
   document.body.appendChild(root);
@@ -38,12 +47,13 @@
         <span class="ml-logo-icon">M</span>
         <span class="ml-logo-text">Meetlytics</span>
       </div>
-      <button class="ml-close" id="meetlytics-close">✕</button>
+      <button class="ml-close" id="meetlytics-close">&#x2715;</button>
     </div>
 
     <div class="ml-status">
       <div class="ml-status-dot idle" id="meetlytics-dot"></div>
       <span id="meetlytics-status-text">Ready to record</span>
+      <span class="ml-ai-badge" id="meetlytics-ai-badge" style="display:none">AI LIVE</span>
     </div>
 
     <div class="ml-timer" id="meetlytics-timer" style="display:none">
@@ -53,9 +63,14 @@
 
     <div class="ml-actions">
       <button class="ml-btn primary" id="meetlytics-record-btn">
-        <span class="ml-btn-icon">●</span>
+        <span class="ml-btn-icon">&#x25CF;</span>
         Start Recording
       </button>
+      <a class="ml-btn ghost" id="meetlytics-dashboard-link"
+         href="http://localhost:5173" target="_blank"
+         style="display:none;text-decoration:none;margin-top:6px">
+        &#x2197; Open Dashboard
+      </a>
     </div>
 
     <div class="ml-section">
@@ -92,25 +107,134 @@
 
   // ── Record button ─────────────────────────────────────────────────────────
   const recordBtn = document.getElementById("meetlytics-record-btn");
-
   recordBtn.addEventListener("click", () => {
-    if (!isRecording) {
-      startRecording();
-    } else {
-      stopRecording();
-    }
+    if (!isRecording) startRecording();
+    else stopRecording();
   });
 
-  // ── Recording via getDisplayMedia (full video + audio) ────────────────────
+  // ── WebSocket to jaylogic ─────────────────────────────────────────────────
+  function connectWS() {
+    try {
+      ws = new WebSocket("ws://localhost:8765/ws");
+    } catch (e) {
+      console.warn("[Meetlytics] WS connect failed:", e);
+      return;
+    }
+
+    ws.onopen = () => {
+      wsConnected = true;
+      document.getElementById("meetlytics-ai-badge").style.display = "inline-block";
+      console.log("[Meetlytics] Connected to jaylogic");
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.event === "init") {
+          console.log("[Meetlytics] Speakers locked:", msg.speakers);
+        } else if (msg.speaker && msg.word) {
+          wsWords.push({ speaker: msg.speaker, word: msg.word, ts: Date.now() });
+        }
+      } catch (_) {}
+    };
+
+    ws.onclose = () => {
+      wsConnected = false;
+      document.getElementById("meetlytics-ai-badge").style.display = "none";
+    };
+
+    ws.onerror = () => { wsConnected = false; };
+  }
+
+  function startFrameCapture() {
+    hiddenVideo = document.createElement("video");
+    hiddenVideo.srcObject = captureStream;
+    hiddenVideo.muted = true;
+    hiddenVideo.autoplay = true;
+    hiddenVideo.style.cssText = "position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;top:0;left:0";
+    document.body.appendChild(hiddenVideo);
+
+    frameCanvas = document.createElement("canvas");
+    frameCanvas.width = 640;
+    frameCanvas.height = 360;
+    frameCtx = frameCanvas.getContext("2d");
+
+    hiddenVideo.addEventListener("loadedmetadata", () => {
+      hiddenVideo.play().catch(() => {});
+      frameLoopId = setInterval(sendFrame, 100); // 10fps to jaylogic
+    });
+  }
+
+  function sendFrame() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!hiddenVideo || hiddenVideo.readyState < 2) return;
+    try {
+      frameCtx.drawImage(hiddenVideo, 0, 0, 640, 360);
+      const dataUrl = frameCanvas.toDataURL("image/jpeg", 0.6);
+      const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+      ws.send(JSON.stringify({ ts_ms: Date.now(), frame: base64 }));
+    } catch (_) {}
+  }
+
+  function startAudioPCM() {
+    const tracks = micStream
+      ? [...micStream.getAudioTracks()]
+      : [...(captureStream.getAudioTracks() || [])];
+
+    if (!tracks.length) return;
+
+    try {
+      pcmAudioCtx = new AudioContext({ sampleRate: 16000 });
+      const source = pcmAudioCtx.createMediaStreamSource(new MediaStream(tracks));
+      // 1600 samples = 100ms at 16kHz
+      const processor = pcmAudioCtx.createScriptProcessor(1600, 1, 1);
+
+      processor.onaudioprocess = (e) => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const float32 = e.inputBuffer.getChannelData(0);
+        const int16 = new Int16Array(float32.length);
+        for (let i = 0; i < float32.length; i++) {
+          int16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32767));
+        }
+        const bytes = new Uint8Array(int16.buffer);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += 8192) {
+          binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + 8192, bytes.length)));
+        }
+        ws.send(JSON.stringify({ type: "audio", ts_ms: Date.now(), pcm: btoa(binary) }));
+      };
+
+      source.connect(processor);
+      processor.connect(pcmAudioCtx.destination);
+    } catch (e) {
+      console.warn("[Meetlytics] PCM setup failed:", e);
+    }
+  }
+
+  function stopWS() {
+    clearInterval(frameLoopId);
+    frameLoopId = null;
+
+    if (hiddenVideo) { hiddenVideo.remove(); hiddenVideo = null; }
+    frameCanvas = null;
+    frameCtx = null;
+
+    if (pcmAudioCtx) { pcmAudioCtx.close().catch(() => {}); pcmAudioCtx = null; }
+
+    if (ws) { ws.close(); ws = null; }
+    wsConnected = false;
+    document.getElementById("meetlytics-ai-badge").style.display = "none";
+  }
+
+  // ── Recording ─────────────────────────────────────────────────────────────
   async function startRecording() {
     try {
-      // Full cleanup of any previous session first
       cleanupStream();
+      wsWords = [];
 
       setStatus("Starting capture...", "idle");
       recordBtn.disabled = true;
 
-      // Step 1: grab the tab screen + audio
       captureStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           displaySurface: "browser",
@@ -133,44 +257,32 @@
         if (isRecording) stopRecording();
       });
 
-      // Step 2: grab the mic (user's own voice in the meeting)
       try {
         micStream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true },
           video: false,
         });
       } catch (e) {
-        console.warn("[Meetlytics] Mic access denied — recording without mic:", e);
+        console.warn("[Meetlytics] Mic denied:", e);
       }
 
-      // Step 3: mix tab audio + mic into one audio track via AudioContext
+      // Mix tab + mic audio for the .webm recording file
       audioCtx = new AudioContext();
       const destination = audioCtx.createMediaStreamDestination();
 
-      // Add tab audio (remote participants)
       if (captureStream.getAudioTracks().length > 0) {
-        const tabSource = audioCtx.createMediaStreamSource(
+        audioCtx.createMediaStreamSource(
           new MediaStream(captureStream.getAudioTracks())
-        );
-        tabSource.connect(destination);
+        ).connect(destination);
       }
-
-      // Add mic audio (local user)
       if (micStream && micStream.getAudioTracks().length > 0) {
-        const micSource = audioCtx.createMediaStreamSource(micStream);
-        micSource.connect(destination);
+        audioCtx.createMediaStreamSource(micStream).connect(destination);
       }
 
-      // Step 4: build final stream — video from tab + mixed audio
       const finalStream = new MediaStream([
         ...captureStream.getVideoTracks(),
         ...destination.stream.getTracks(),
       ]);
-
-      const hasAudio = finalStream.getAudioTracks().length > 0;
-      if (!hasAudio) {
-        showNotification("Warning: no audio captured — mic or tab audio required", "error");
-      }
 
       audioChunks = [];
       const mimeType = getBestMimeType();
@@ -183,35 +295,36 @@
       mediaRecorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) audioChunks.push(e.data);
       };
-
       mediaRecorder.onstop = () => {
         cleanupStream();
         saveRecording();
       };
-
       mediaRecorder.start(1000);
+
+      // Connect to jaylogic — stream frames + audio PCM live
+      connectWS();
+      startFrameCapture();
+      startAudioPCM();
 
       isRecording = true;
       recordingStartTime = Date.now();
       recordBtn.disabled = false;
-      recordBtn.innerHTML = `<span class="ml-btn-icon stop">■</span> Stop Recording`;
+      recordBtn.innerHTML = `<span class="ml-btn-icon stop">&#x25A0;</span> Stop Recording`;
       recordBtn.classList.add("recording");
       document.getElementById("meetlytics-timer").style.display = "flex";
+      document.getElementById("meetlytics-dashboard-link").style.display = "flex";
       setStatus("Recording in progress", "recording");
       timerInterval = setInterval(updateTimer, 1000);
 
-      // Hide extension UI so it doesn't appear in the recording
+      // Hide UI so it doesn't appear in the recording
       root.style.display = "none";
 
-      const audioNote = hasAudio ? "" : " (no audio)";
-      console.log("[Meetlytics] Recording started:", mimeType, audioNote);
-
+      console.log("[Meetlytics] Recording started:", mimeType);
     } catch (error) {
       console.error("[Meetlytics] Failed:", error);
       cleanupStream();
       recordBtn.disabled = false;
       setStatus("Ready to record", "idle");
-
       if (error.name === "NotAllowedError" || error.message.includes("cancelled")) {
         showNotification("Recording cancelled", "info");
       } else {
@@ -222,18 +335,17 @@
 
   function stopRecording() {
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
-      mediaRecorder.stop(); // triggers onstop → saveRecording()
+      mediaRecorder.stop();
     } else {
       cleanupStream();
     }
 
+    stopWS();
     isRecording = false;
     clearInterval(timerInterval);
 
-    // Bring the UI back
     root.style.display = "";
-
-    recordBtn.innerHTML = `<span class="ml-btn-icon">●</span> Start Recording`;
+    recordBtn.innerHTML = `<span class="ml-btn-icon">&#x25CF;</span> Start Recording`;
     recordBtn.classList.remove("recording");
     document.getElementById("meetlytics-dot").className = "ml-status-dot idle";
     document.getElementById("meetlytics-timer").style.display = "none";
@@ -241,18 +353,9 @@
   }
 
   function cleanupStream() {
-    if (captureStream) {
-      captureStream.getTracks().forEach((t) => t.stop());
-      captureStream = null;
-    }
-    if (micStream) {
-      micStream.getTracks().forEach((t) => t.stop());
-      micStream = null;
-    }
-    if (audioCtx) {
-      audioCtx.close().catch(() => {});
-      audioCtx = null;
-    }
+    if (captureStream) { captureStream.getTracks().forEach(t => t.stop()); captureStream = null; }
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
     mediaRecorder = null;
   }
 
@@ -263,42 +366,51 @@
       return;
     }
 
-    // Use webm — universally supported in Chrome
-    const mimeType = "video/webm";
-    const blob = new Blob(audioChunks, { type: mimeType });
+    const blob = new Blob(audioChunks, { type: "video/webm" });
     const filename = `meetlytics-${formatDate()}.webm`;
     const sizeMb = (blob.size / 1024 / 1024).toFixed(1);
 
-    // Trigger download
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-    // Revoke after a short delay so download has time to start
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 3000);
+
+    // Save transcript JSON alongside the video
+    if (wsWords.length > 0) saveTranscript(filename);
 
     audioChunks = [];
     setStatus("Ready to record", "idle");
     showNotification(`Saved: ${filename} (${sizeMb} MB)`, "success");
     showSessionInfo(filename, sizeMb);
+    console.log("[Meetlytics] Saved:", filename, sizeMb + "MB", wsWords.length + " words");
+  }
 
-    console.log("[Meetlytics] Saved:", filename, sizeMb + "MB");
+  function saveTranscript(videoFilename) {
+    const utterances = [];
+    let cur = null;
+    for (const w of wsWords) {
+      if (!cur || cur.speaker !== w.speaker) {
+        cur = { speaker: w.speaker, text: w.word, start_ms: w.ts };
+        utterances.push(cur);
+      } else {
+        cur.text += " " + w.word;
+      }
+    }
+    const data = { recorded_at: new Date().toISOString(), participants, word_count: wsWords.length, utterances };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const filename = videoFilename.replace(".webm", "-transcript.json");
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function getBestMimeType() {
-    const types = [
-      "video/webm;codecs=vp9,opus",
-      "video/webm;codecs=vp8,opus",
-      "video/webm",
-    ];
-    for (const type of types) {
-      if (MediaRecorder.isTypeSupported(type)) return type;
-    }
+    const types = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+    for (const t of types) if (MediaRecorder.isTypeSupported(t)) return t;
     return "video/webm";
   }
 
@@ -308,8 +420,7 @@
     const h = Math.floor(elapsed / 3600).toString().padStart(2, "0");
     const m = Math.floor((elapsed % 3600) / 60).toString().padStart(2, "0");
     const s = (elapsed % 60).toString().padStart(2, "0");
-    document.getElementById("meetlytics-timer-value").textContent =
-      `${h}:${m}:${s}`;
+    document.getElementById("meetlytics-timer-value").textContent = `${h}:${m}:${s}`;
   }
 
   function setStatus(text, type) {
@@ -320,25 +431,22 @@
   function showSessionInfo(filename, sizeMb) {
     const section = document.getElementById("meetlytics-session-section");
     const info = document.getElementById("meetlytics-session-info");
-    const duration = recordingStartTime
-      ? Math.floor((Date.now() - recordingStartTime) / 1000)
-      : 0;
+    const duration = recordingStartTime ? Math.floor((Date.now() - recordingStartTime) / 1000) : 0;
     const mins = Math.floor(duration / 60);
     const secs = duration % 60;
 
+    const wordCounts = {};
+    for (const w of wsWords) wordCounts[w.speaker] = (wordCounts[w.speaker] || 0) + 1;
+    const speakerRows = Object.entries(wordCounts)
+      .map(([s, n]) => `<div class="ml-session-row"><span>${s}</span><strong>${n} words</strong></div>`)
+      .join("");
+
     info.innerHTML = `
-      <div class="ml-session-row">
-        <span>Duration</span><strong>${mins}m ${secs}s</strong>
-      </div>
-      <div class="ml-session-row">
-        <span>Participants</span><strong>${participants.length}</strong>
-      </div>
-      <div class="ml-session-row">
-        <span>Size</span><strong>${sizeMb} MB</strong>
-      </div>
-      <div class="ml-session-row">
-        <span>File</span><strong>${filename}</strong>
-      </div>
+      <div class="ml-session-row"><span>Duration</span><strong>${mins}m ${secs}s</strong></div>
+      <div class="ml-session-row"><span>Participants</span><strong>${participants.length}</strong></div>
+      <div class="ml-session-row"><span>Words transcribed</span><strong>${wsWords.length}</strong></div>
+      <div class="ml-session-row"><span>Size</span><strong>${sizeMb} MB</strong></div>
+      ${speakerRows}
     `;
     section.style.display = "block";
   }
@@ -359,29 +467,23 @@
   }
 
   function getInitials(name) {
-    return name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
+    return name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
   }
 
   // ── Participant detection ─────────────────────────────────────────────────
   function detectParticipants() {
-    const tiles = document.querySelectorAll("[data-participant-id]");
     const names = new Set();
-
-    tiles.forEach((tile) => {
+    document.querySelectorAll("[data-participant-id]").forEach((tile) => {
       const label =
         tile.getAttribute("aria-label") ||
         tile.querySelector("[class*='name']")?.textContent ||
         tile.querySelector("[class*='ZjFb7c']")?.textContent;
-      if (label && label.trim().length > 1 && label.trim().length < 60) {
-        names.add(label.trim());
-      }
+      if (label && label.trim().length > 1 && label.trim().length < 60) names.add(label.trim());
     });
-
     document.querySelectorAll("[data-member-id] span").forEach((el) => {
       const text = el.textContent?.trim();
       if (text && text.length > 1 && text.length < 60) names.add(text);
     });
-
     participants = Array.from(names);
     renderParticipants();
   }
@@ -396,7 +498,7 @@
       return;
     }
 
-    container.innerHTML = participants.map((name) => `
+    container.innerHTML = participants.map(name => `
       <div class="ml-participant">
         <div class="ml-avatar">${getInitials(name)}</div>
         <span class="ml-participant-name">${name}</span>
@@ -405,7 +507,6 @@
     `).join("");
   }
 
-  // Listen for messages from background
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === "TOGGLE_PANEL") {
       isPanelOpen = !isPanelOpen;

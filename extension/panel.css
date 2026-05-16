@@ -328,6 +328,36 @@
   font-weight: 500;
 }
 
+/* ── AI badge ────────────────────────────────────────────────────────────── */
+.ml-ai-badge {
+  margin-left: auto;
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  animation: pulse 2s infinite;
+}
+
+/* ── Ghost button ────────────────────────────────────────────────────────── */
+.ml-btn.ghost {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.ml-btn.ghost:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+}
+
 /* ── Footer ──────────────────────────────────────────────────────────────── */
 .ml-footer {
   padding: 8px 16px;

@@ -56,6 +56,7 @@ _person_map: dict[str, str] = {}   # track_id -> "person_N", locked at frame 30
 _person_map_locked = False
 
 _out_queue: asyncio.Queue = asyncio.Queue()
+_feed_clients: set = set()   # dashboard WebSocket queues
 _loop: asyncio.AbstractEventLoop
 _frame_executor = ThreadPoolExecutor(max_workers=1)  # serialize frame processing
 
@@ -81,6 +82,9 @@ async def _word_task() -> None:
         attributed = diarizer.attribute(word)
         attributed["speaker"] = _person_map.get(attributed["speaker"], attributed["speaker"])
         await _out_queue.put(attributed)
+        # Fan-out to dashboard clients
+        for q in list(_feed_clients):
+            await q.put(attributed)
 
 
 # ── lifespan ──────────────────────────────────────────────────────────────────
@@ -171,7 +175,39 @@ def _process_frame(jpeg: bytes, ts_ms: float) -> None:
         _person_map_locked = True
         init_msg = {"event": "init", "speakers": list(_person_map.values())}
         _loop.call_soon_threadsafe(_out_queue.put_nowait, init_msg)
+        for q in list(_feed_clients):
+            _loop.call_soon_threadsafe(q.put_nowait, init_msg)
         print(f"[server] locked person map: {_person_map}")
+
+
+
+# ── Dashboard feed (read-only WebSocket for the React frontend) ───────────────
+
+@app.websocket("/feed")
+async def feed_endpoint(ws: WebSocket) -> None:
+    await ws.accept()
+    q: asyncio.Queue = asyncio.Queue()
+    _feed_clients.add(q)
+    try:
+        while True:
+            msg = await q.get()
+            await ws.send_text(json.dumps(msg))
+    except Exception:
+        pass
+    finally:
+        _feed_clients.discard(q)
+
+
+# ── CORS (allow React dev server at localhost:5173) ───────────────────────────
+
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 if __name__ == "__main__":
