@@ -1,19 +1,19 @@
 import { useRef, useMemo, useCallback, useEffect } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, Text, Billboard } from '@react-three/drei'
-import { EffectComposer, Bloom } from '@react-three/postprocessing'
+import { OrbitControls, Text, Billboard, Stars } from '@react-three/drei'
+import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import { useForceGraph } from './useForceGraph'
 import { useStore } from '../store'
 
 const ENTITY_COLOR = {
-  CONCEPT:      new THREE.Color('#B8422E'),
-  PERSON:       new THREE.Color('#d48a50'),
+  CONCEPT: new THREE.Color('#B8422E'),
+  PERSON: new THREE.Color('#d48a50'),
   ORGANIZATION: new THREE.Color('#4a90d9'),
-  PLACE:        new THREE.Color('#5cb87a'),
-  TECHNOLOGY:   new THREE.Color('#50c8c8'),
-  EVENT:        new THREE.Color('#c8b840'),
-  CHUNK:        new THREE.Color('#8a50d4'),
+  PLACE: new THREE.Color('#5cb87a'),
+  TECHNOLOGY: new THREE.Color('#50c8c8'),
+  EVENT: new THREE.Color('#c8b840'),
+  CHUNK: new THREE.Color('#9b6dff'),
 }
 
 function entityColor(node) {
@@ -21,7 +21,6 @@ function entityColor(node) {
 }
 
 // ── Dragger ───────────────────────────────────────────────
-// Handles continuous pointer-move tracking and pointer-up release.
 function Dragger({ nodesRef, simRef, orbitRef, dragRef, dirtyRef }) {
   const { raycaster, pointer, camera } = useThree()
   const hitTarget = useMemo(() => new THREE.Vector3(), [])
@@ -31,7 +30,7 @@ function Dragger({ nodesRef, simRef, orbitRef, dragRef, dirtyRef }) {
       if (!dragRef.current.active) return
       const node = nodesRef.current[dragRef.current.nodeIdx]
       if (node) { node.fx = null; node.fy = null }
-      dragRef.current.active  = false
+      dragRef.current.active = false
       dragRef.current.nodeIdx = null
       simRef.current?.alphaTarget(0)
       if (orbitRef.current) orbitRef.current.enabled = true
@@ -57,58 +56,73 @@ function Dragger({ nodesRef, simRef, orbitRef, dragRef, dirtyRef }) {
   return null
 }
 
-// ── GraphNodes ────────────────────────────────────────────
-function GraphNodes({ graphData, nodesRef, simRef, orbitRef, dragRef, dirtyRef }) {
-  const meshRef       = useRef()
-  const dummy         = useMemo(() => new THREE.Object3D(), [])
-  const color         = useMemo(() => new THREE.Color(), [])
-  const selected      = useStore(s => s.selectedNode)
-  const setSelected   = useStore(s => s.setSelectedNode)
-  const prevSelId     = useRef(null)
-  const count         = graphData.nodes.length
+// ── NodeMesh ──────────────────────────────────────────────
+// Reusable instanced-mesh for one node category (entity or chunk).
+// idxList maps local instance index → global nodesRef index.
+function NodeMesh({
+  idxList, nodesRef, simRef, orbitRef, dragRef, dirtyRef,
+  geometryArgs, geometryType = 'sphere',
+  material, rotateSpeed = 0,
+}) {
+  const meshRef = useRef()
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+  const color = useMemo(() => new THREE.Color(), [])
+  const selected = useStore(s => s.selectedNode)
+  const setSelected = useStore(s => s.setSelectedNode)
+  const prevSelId = useRef(null)
+  const rotRef = useRef(0)
+  const count = idxList.length
 
   const onPointerDown = useCallback(e => {
-    const idx = e.instanceId
-    if (idx == null) return
+    const localIdx = e.instanceId
+    if (localIdx == null) return
     e.stopPropagation()
-    const node = nodesRef.current[idx]
+    const globalIdx = idxList[localIdx]
+    const node = nodesRef.current[globalIdx]
     if (!node) return
-    // Drag plane: face the camera, pass through node world position
     const nodePos = new THREE.Vector3(node.x || 0, node.y || 0, node.z || 0)
-    const normal  = e.camera
+    const normal = e.camera
       ? e.camera.position.clone().sub(nodePos).normalize()
       : new THREE.Vector3(0, 0, 1)
     dragRef.current.plane.setFromNormalAndCoplanarPoint(normal, nodePos)
-    dragRef.current.active  = true
-    dragRef.current.nodeIdx = idx
-    node.fx = node.x
-    node.fy = node.y
+    dragRef.current.active = true
+    dragRef.current.nodeIdx = globalIdx
+    node.fx = node.x; node.fy = node.y
     simRef.current?.alphaTarget(0.3).restart()
     if (orbitRef.current) orbitRef.current.enabled = false
     document.body.style.cursor = 'grabbing'
-  }, [nodesRef, simRef, orbitRef, dragRef])
+  }, [idxList, nodesRef, simRef, orbitRef, dragRef])
 
   const onClick = useCallback(e => {
-    const idx = e.instanceId
-    if (idx == null) return
-    const n = nodesRef.current[idx]
+    const localIdx = e.instanceId
+    if (localIdx == null) return
+    const globalIdx = idxList[localIdx]
+    const n = nodesRef.current[globalIdx]
     if (!n) return
     setSelected(selected?.id === n.id ? null : n)
-  }, [selected, nodesRef, setSelected])
+  }, [idxList, nodesRef, selected, setSelected])
 
-  useFrame(() => {
+  useFrame((_, dt) => {
     if (!meshRef.current || count === 0) return
     const selChanged = selected?.id !== prevSelId.current
-    if (!dirtyRef.current && !selChanged) return
+    if (!dirtyRef.current && !selChanged && rotateSpeed === 0) return
     prevSelId.current = selected?.id
+    if (rotateSpeed > 0) rotRef.current += dt * rotateSpeed
+    const r = rotRef.current
     const nodes = nodesRef.current
-    for (let i = 0; i < Math.min(nodes.length, count); i++) {
-      const n = nodes[i]
+    for (let i = 0; i < count; i++) {
+      const n = nodes[idxList[i]]
+      if (!n) continue
       dummy.position.set(n.x || 0, n.y || 0, n.z || 0)
-      dummy.scale.setScalar(n.r / 7)
+      if (rotateSpeed > 0) {
+        dummy.rotation.set(r * 0.6, r, r * 0.4)
+      } else {
+        dummy.rotation.set(0, 0, 0)
+      }
+      dummy.scale.setScalar((n.r || 7) / 7)
       dummy.updateMatrix()
       meshRef.current.setMatrixAt(i, dummy.matrix)
-      color.copy(n.id === selected?.id ? new THREE.Color('#F7F5F2') : entityColor(n))
+      color.copy(n.id === selected?.id ? new THREE.Color('#ffffff') : entityColor(n))
       meshRef.current.setColorAt(i, color)
     }
     meshRef.current.instanceMatrix.needsUpdate = true
@@ -126,28 +140,53 @@ function GraphNodes({ graphData, nodesRef, simRef, orbitRef, dragRef, dirtyRef }
       onPointerEnter={() => { document.body.style.cursor = 'grab' }}
       onPointerLeave={() => { if (!dragRef.current.active) document.body.style.cursor = 'default' }}
     >
-      <sphereGeometry args={[7, 20, 20]} />
-      <meshStandardMaterial
-        vertexColors
-        emissive="#ffffff"
-        emissiveIntensity={0.85}
-        roughness={0.2}
-        metalness={0.1}
-      />
+      {geometryType === 'icosahedron'
+        ? <icosahedronGeometry args={geometryArgs} />
+        : <sphereGeometry args={geometryArgs} />}
+      {material}
     </instancedMesh>
+  )
+}
+
+// ── SelectionRing ─────────────────────────────────────────
+// Pulsing wireframe shell around the currently selected node.
+function SelectionRing({ nodesRef }) {
+  const ref = useRef()
+  const selected = useStore(s => s.selectedNode)
+
+  useFrame((state) => {
+    if (!ref.current) return
+    if (!selected) { ref.current.visible = false; return }
+    const n = nodesRef.current.find(x => x.id === selected.id)
+    if (!n) { ref.current.visible = false; return }
+    ref.current.visible = true
+    const t = state.clock.elapsedTime
+    const pulse = 1 + Math.sin(t * 3) * 0.08
+    const r = ((n.r || 7) + 4) * pulse / 7
+    ref.current.position.set(n.x || 0, n.y || 0, n.z || 0)
+    ref.current.scale.setScalar(r)
+    ref.current.rotation.y += 0.01
+    ref.current.rotation.x += 0.006
+  })
+
+  return (
+    <mesh ref={ref} raycast={() => null} visible={false}>
+      <icosahedronGeometry args={[7, 1]} />
+      <meshBasicMaterial color="#fffaf2" wireframe transparent opacity={0.55} />
+    </mesh>
   )
 }
 
 // ── GraphEdges ────────────────────────────────────────────
 function GraphEdges({ graphData, nodesRef, dirtyRef }) {
-  const ref   = useRef()
+  const ref = useRef()
   const count = graphData.links.length
 
   const positions = useMemo(() => new Float32Array(count * 6), [count])
 
   useFrame(() => {
     if (!ref.current || count === 0 || !dirtyRef.current) return
-    const buf   = ref.current.geometry.attributes.position.array
+    const buf = ref.current.geometry.attributes.position.array
     const links = graphData.links
     let idx = 0
     for (const l of links) {
@@ -166,22 +205,22 @@ function GraphEdges({ graphData, nodesRef, dirtyRef }) {
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" args={[positions, 3]} />
       </bufferGeometry>
-      <lineBasicMaterial color="#9ab0d0" transparent opacity={0.5} />
+      <lineBasicMaterial color="#9ab0d0" transparent opacity={0.45} />
     </lineSegments>
   )
 }
 
+// ── NodeLabels ────────────────────────────────────────────
 function NodeLabels({ graphData, nodesRef, dirtyRef }) {
   const groupRef = useRef()
-  const count    = graphData.nodes.length
+  const count = graphData.nodes.length
   const selected = useStore(s => s.selectedNode)
   const setSelected = useStore(s => s.setSelectedNode)
 
-  // We intentionally allow labels to be clicked now
   useFrame(() => {
     if (!groupRef.current || count === 0 || !dirtyRef.current) return
     const children = groupRef.current.children
-    const nodes    = nodesRef.current
+    const nodes = nodesRef.current
     for (let i = 0; i < Math.min(nodes.length, children.length); i++) {
       const n = nodes[i]
       children[i].position.set(n.x || 0, (n.y || 0) + (n.r || 7) + 5, n.z || 0)
@@ -194,8 +233,9 @@ function NodeLabels({ graphData, nodesRef, dirtyRef }) {
     <group ref={groupRef}>
       {graphData.nodes.map((n, i) => {
         const label = (n.label || '').length > 22 ? (n.label || '').slice(0, 22) + '…' : (n.label || '')
+        const isSelected = selected?.id === n.id
         return (
-          <Billboard 
+          <Billboard
             key={n.id || i}
             onClick={(e) => {
               e.stopPropagation()
@@ -205,13 +245,13 @@ function NodeLabels({ graphData, nodesRef, dirtyRef }) {
             onPointerLeave={() => { document.body.style.cursor = 'default' }}
           >
             <Text
-              fontSize={3.6}
-              color="#F7F5F2"
+              fontSize={isSelected ? 4.2 : 3.4}
+              color={isSelected ? '#fff7e8' : '#F7F5F2'}
               anchorX="center"
               anchorY="bottom"
               outlineWidth={0.18}
               outlineColor="#000000"
-              outlineOpacity={0.9}
+              outlineOpacity={0.95}
               maxWidth={50}
             >
               {label}
@@ -224,23 +264,23 @@ function NodeLabels({ graphData, nodesRef, dirtyRef }) {
 }
 
 // ── NeuralPulses ──────────────────────────────────────────
-const PULSE_COUNT = 10
+const PULSE_COUNT = 14
 
 function NeuralPulses({ graphData, nodesRef }) {
-  const meshRef    = useRef()
-  const dummy      = useMemo(() => new THREE.Object3D(), [])
-  const tsRef      = useRef(Array.from({ length: PULSE_COUNT }, () => Math.random()))
+  const meshRef = useRef()
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+  const tsRef = useRef(Array.from({ length: PULSE_COUNT }, () => Math.random()))
   const linkIdxRef = useRef(Array.from({ length: PULSE_COUNT }, () =>
     Math.floor(Math.random() * Math.max(1, graphData.links.length))
   ))
 
   useFrame((_, delta) => {
     if (!meshRef.current || graphData.links.length === 0) return
-    const ts   = tsRef.current
+    const ts = tsRef.current
     const idxs = linkIdxRef.current
 
     for (let i = 0; i < PULSE_COUNT; i++) {
-      ts[i] = (ts[i] + delta * (0.35 + i * 0.06)) % 1
+      ts[i] = (ts[i] + delta * (0.32 + i * 0.05)) % 1
 
       const link = graphData.links[idxs[i] % graphData.links.length]
       if (!link) continue
@@ -255,7 +295,7 @@ function NeuralPulses({ graphData, nodesRef }) {
         (s.z || 0) + ((t.z || 0) - (s.z || 0)) * tt,
       )
       const fade = Math.sin(tt * Math.PI)
-      dummy.scale.setScalar(fade * 0.7 + 0.15)
+      dummy.scale.setScalar(fade * 0.75 + 0.15)
       dummy.updateMatrix()
       meshRef.current.setMatrixAt(i, dummy.matrix)
     }
@@ -265,7 +305,7 @@ function NeuralPulses({ graphData, nodesRef }) {
   if (graphData.links.length === 0) return null
 
   return (
-    <instancedMesh ref={meshRef} args={[null, null, PULSE_COUNT]}>
+    <instancedMesh ref={meshRef} args={[null, null, PULSE_COUNT]} raycast={() => null}>
       <sphereGeometry args={[2.8, 8, 8]} />
       <meshStandardMaterial color="#ff6644" emissive="#ff4422" emissiveIntensity={4} roughness={0} />
     </instancedMesh>
@@ -275,8 +315,8 @@ function NeuralPulses({ graphData, nodesRef }) {
 // ── Scene root ────────────────────────────────────────────
 export function Scene({ graphData }) {
   const orbitRef = useRef()
-  const dragRef  = useRef({ active: false, nodeIdx: null, plane: new THREE.Plane() })
-  const { nodesRef, linksRef, simRef, mouseRef, dirtyRef } = useForceGraph(graphData)
+  const dragRef = useRef({ active: false, nodeIdx: null, plane: new THREE.Plane() })
+  const { nodesRef, simRef, mouseRef, dirtyRef } = useForceGraph(graphData)
   const { mouse } = useThree()
 
   useFrame(() => {
@@ -284,28 +324,79 @@ export function Scene({ graphData }) {
     mouseRef.current.y = mouse.y * 240
   })
 
+  // Split node indices by type so we can render chunks with their own geometry
+  const { entityIdxs, chunkIdxs } = useMemo(() => {
+    const e = [], c = []
+    graphData.nodes.forEach((n, i) => {
+      if (n.type === 'CHUNK') c.push(i)
+      else e.push(i)
+    })
+    return { entityIdxs: e, chunkIdxs: c }
+  }, [graphData.nodes])
+
+  const sharedProps = { nodesRef, simRef, orbitRef, dragRef, dirtyRef }
+
   return (
     <>
-      <color attach="background" args={['#080a0d']} />
-      <fog   attach="fog"        args={['#080a0d', 350, 700]} />
+      <color attach="background" args={['#060810']} />
+      <fog attach="fog" args={['#060810', 380, 760]} />
 
-      <ambientLight intensity={0.1} />
-      <pointLight position={[0, 0, 100]}   intensity={0.6} color="#B8422E" distance={400} />
-      <pointLight position={[0, 0, -100]}  intensity={0.2} color="#4a90d9" distance={300} />
+      <Stars radius={500} depth={250} count={2500} factor={5} saturation={0} fade speed={0.4} />
 
-      <GraphEdges   graphData={graphData} nodesRef={nodesRef} dirtyRef={dirtyRef} />
+      <ambientLight intensity={0.12} />
+      <hemisphereLight args={['#4a90d9', '#1a0a14', 0.25]} />
+      <pointLight position={[0, 0, 120]} intensity={0.7} color="#B8422E" distance={420} />
+      <pointLight position={[0, 0, -120]} intensity={0.25} color="#4a90d9" distance={320} />
+      <pointLight position={[150, 60, 0]} intensity={0.35} color="#9b6dff" distance={300} />
+
+      <GraphEdges graphData={graphData} nodesRef={nodesRef} dirtyRef={dirtyRef} />
       <NeuralPulses graphData={graphData} nodesRef={nodesRef} />
-      <GraphNodes   graphData={graphData} nodesRef={nodesRef} simRef={simRef} orbitRef={orbitRef} dragRef={dragRef} dirtyRef={dirtyRef} />
-      <NodeLabels   graphData={graphData} nodesRef={nodesRef} dirtyRef={dirtyRef} />
-      <Dragger nodesRef={nodesRef} simRef={simRef} orbitRef={orbitRef} dragRef={dragRef} dirtyRef={dirtyRef} />
+
+      <NodeMesh
+        idxList={entityIdxs}
+        {...sharedProps}
+        geometryType="sphere"
+        geometryArgs={[7, 24, 24]}
+        material={
+          <meshStandardMaterial
+            vertexColors
+            emissive="#ffffff"
+            emissiveIntensity={0.65}
+            roughness={0.32}
+            metalness={0.18}
+          />
+        }
+      />
+      <NodeMesh
+        idxList={chunkIdxs}
+        {...sharedProps}
+        geometryType="icosahedron"
+        geometryArgs={[7, 0]}
+        rotateSpeed={0.45}
+        material={
+          <meshStandardMaterial
+            vertexColors
+            emissive="#ffffff"
+            emissiveIntensity={1.25}
+            roughness={0.15}
+            metalness={0.7}
+            flatShading
+          />
+        }
+      />
+
+      <SelectionRing nodesRef={nodesRef} />
+      <NodeLabels graphData={graphData} nodesRef={nodesRef} dirtyRef={dirtyRef} />
+      <Dragger {...sharedProps} />
 
       <EffectComposer>
         <Bloom
-          intensity={2.6}
-          luminanceThreshold={0.04}
+          intensity={2.2}
+          luminanceThreshold={0.05}
           luminanceSmoothing={0.85}
           mipmapBlur
         />
+        <Vignette offset={0.3} darkness={0.7} eskil={false} />
       </EffectComposer>
 
       <OrbitControls
