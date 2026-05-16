@@ -14,9 +14,8 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(Path(__file__).parent / ".env")
 
-import anthropic
 import markdown as md
 import networkx as nx
 import numpy as np
@@ -27,6 +26,7 @@ from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from neo4j import GraphDatabase
+from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
@@ -48,8 +48,15 @@ EMBED_DIM  = 384  # all-MiniLM-L6-v2
 
 driver       = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
 embedder     = SentenceTransformer("all-MiniLM-L6-v2")
-claude       = anthropic.Anthropic()
-async_claude = anthropic.AsyncAnthropic()
+
+# ── LLM client (TokenRouter, OpenAI-compatible) ───────────────────────────────
+TOKENROUTER_BASE = os.getenv("TOKENROUTER_BASE_URL", "https://api.tokenrouter.com/v1")
+TOKENROUTER_KEY  = os.getenv("TOKENROUTER_API_KEY")
+HAIKU_MODEL      = os.getenv("HAIKU_MODEL",  "anthropic/claude-sonnet-4.6")
+SONNET_MODEL     = os.getenv("SONNET_MODEL", "anthropic/claude-sonnet-4.6")
+
+claude       = OpenAI(base_url=TOKENROUTER_BASE, api_key=TOKENROUTER_KEY)
+async_claude = AsyncOpenAI(base_url=TOKENROUTER_BASE, api_key=TOKENROUTER_KEY)
 
 
 # ── Neo4j schema bootstrap ────────────────────────────────────────────────────
@@ -127,13 +134,15 @@ __TEXT__"""
 
 async def extract_graph(text: str) -> dict:
     try:
-        resp = await async_claude.messages.create(
-            model="claude-haiku-4-5-20251001",
+        resp = await async_claude.chat.completions.create(
+            model=HAIKU_MODEL,
             max_tokens=1200,
-            system=EXTRACT_SYSTEM,
-            messages=[{"role": "user", "content": EXTRACT_USER.replace("__TEXT__", text)}],
+            messages=[
+                {"role": "system", "content": EXTRACT_SYSTEM},
+                {"role": "user",   "content": EXTRACT_USER.replace("__TEXT__", text)},
+            ],
         )
-        raw = resp.content[0].text.strip()
+        raw = resp.choices[0].message.content.strip()
         raw = re.sub(r"^```[a-z]*\n?", "", raw)
         raw = re.sub(r"\n?```$", "", raw)
         # Slice out the first {...} object in case Claude added preamble/trailing prose
@@ -406,18 +415,20 @@ async def finalize_session(req: SessionRequest, background_tasks: BackgroundTask
     duration_str = f"{mins}m {secs}s"
     participants_str = ", ".join(req.participants) if req.participants else "Unknown"
 
-    mom_resp = claude.messages.create(
-        model="claude-haiku-4-5-20251001",
+    mom_resp = claude.chat.completions.create(
+        model=HAIKU_MODEL,
         max_tokens=2000,
-        system=MOM_SYSTEM,
-        messages=[{"role": "user", "content": MOM_PROMPT.format(
-            date=date_str,
-            duration=duration_str,
-            participants=participants_str,
-            transcript=transcript,
-        )}],
+        messages=[
+            {"role": "system", "content": MOM_SYSTEM},
+            {"role": "user",   "content": MOM_PROMPT.format(
+                date=date_str,
+                duration=duration_str,
+                participants=participants_str,
+                transcript=transcript,
+            )},
+        ],
     )
-    mom_markdown = mom_resp.content[0].text.strip()
+    mom_markdown = mom_resp.choices[0].message.content.strip()
 
     # Build raw transcript markdown — preserves speaker detail MoM may omit
     transcript_markdown = (
@@ -663,18 +674,20 @@ Knowledge graph relationships:
 
 Question: {req.query}"""
 
-    resp = claude.messages.create(
-        model="claude-sonnet-4-6",
+    resp = claude.chat.completions.create(
+        model=SONNET_MODEL,
         max_tokens=1200,
-        system=system,
-        messages=[{"role": "user", "content": user_msg}],
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user",   "content": user_msg},
+        ],
     )
 
     sources = [
         {"id": r["id"], "filename": r["name"], "text": r.get("desc", ""), "type": r["type"]}
         for r in entity_hits[:5]
     ]
-    return {"answer": resp.content[0].text, "sources": sources, "mode": "local"}
+    return {"answer": resp.choices[0].message.content, "sources": sources, "mode": "local"}
 
 
 async def _global_query(req: QueryRequest):
@@ -694,19 +707,18 @@ async def _global_query(req: QueryRequest):
     summaries = "\n\n".join(
         f"Community (size {c['size']}): {c['summary']}" for c in comms
     )
-    resp = claude.messages.create(
-        model="claude-sonnet-4-6",
+    resp = claude.chat.completions.create(
+        model=SONNET_MODEL,
         max_tokens=1400,
-        system=(
-            "You analyze a knowledge graph's community structure to answer holistic, "
-            "thematic questions. Synthesize across all communities."
-        ),
-        messages=[{
-            "role": "user",
-            "content": f"Community summaries:\n{summaries}\n\nQuestion: {req.query}",
-        }],
+        messages=[
+            {"role": "system", "content": (
+                "You analyze a knowledge graph's community structure to answer holistic, "
+                "thematic questions. Synthesize across all communities."
+            )},
+            {"role": "user", "content": f"Community summaries:\n{summaries}\n\nQuestion: {req.query}"},
+        ],
     )
-    return {"answer": resp.content[0].text, "sources": [], "mode": "global"}
+    return {"answer": resp.choices[0].message.content, "sources": [], "mode": "global"}
 
 
 # ── Community detection & summarisation ───────────────────────────────────────
@@ -746,8 +758,8 @@ async def build_communities():
             member_names = [id_to_name.get(m, m) for m in members]
 
             # Generate community summary with Claude Haiku
-            summary_resp = claude.messages.create(
-                model="claude-haiku-4-5-20251001",
+            summary_resp = claude.chat.completions.create(
+                model=HAIKU_MODEL,
                 max_tokens=250,
                 messages=[{
                     "role": "user",
@@ -758,7 +770,7 @@ async def build_communities():
                     ),
                 }],
             )
-            summary = summary_resp.content[0].text.strip()
+            summary = summary_resp.choices[0].message.content.strip()
             comm_id = f"community_{idx}"
 
             s.run(

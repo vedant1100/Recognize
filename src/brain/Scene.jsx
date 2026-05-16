@@ -1,6 +1,6 @@
 import { useRef, useMemo, useCallback, useEffect } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls } from '@react-three/drei'
+import { OrbitControls, Text, Billboard } from '@react-three/drei'
 import { EffectComposer, Bloom } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import { useForceGraph } from './useForceGraph'
@@ -170,6 +170,55 @@ function GraphEdges({ graphData, nodesRef, dirtyRef }) {
   )
 }
 
+// ── NodeLabels ────────────────────────────────────────────
+function NodeLabels({ graphData, nodesRef, dirtyRef }) {
+  const groupRef = useRef()
+  const count    = graphData.nodes.length
+
+  // Labels must not eat pointer events meant for the spheres underneath
+  useEffect(() => {
+    if (!groupRef.current) return
+    groupRef.current.traverse(o => { o.raycast = () => null })
+  }, [count])
+
+  useFrame(() => {
+    if (!groupRef.current || count === 0 || !dirtyRef.current) return
+    const children = groupRef.current.children
+    const nodes    = nodesRef.current
+    for (let i = 0; i < Math.min(nodes.length, children.length); i++) {
+      const n = nodes[i]
+      children[i].position.set(n.x || 0, (n.y || 0) + (n.r || 7) + 5, n.z || 0)
+    }
+  })
+
+  if (count === 0) return null
+
+  return (
+    <group ref={groupRef}>
+      {graphData.nodes.map((n, i) => {
+        const label = (n.label || '').length > 22 ? (n.label || '').slice(0, 22) + '…' : (n.label || '')
+        return (
+          <Billboard key={n.id || i} raycast={() => null}>
+            <Text
+              fontSize={3.6}
+              color="#F7F5F2"
+              anchorX="center"
+              anchorY="bottom"
+              outlineWidth={0.18}
+              outlineColor="#000000"
+              outlineOpacity={0.9}
+              maxWidth={50}
+              raycast={() => null}
+            >
+              {label}
+            </Text>
+          </Billboard>
+        )
+      })}
+    </group>
+  )
+}
+
 // ── NeuralPulses ──────────────────────────────────────────
 const PULSE_COUNT = 10
 
@@ -243,6 +292,7 @@ export function Scene({ graphData }) {
       <GraphEdges   graphData={graphData} nodesRef={nodesRef} dirtyRef={dirtyRef} />
       <NeuralPulses graphData={graphData} nodesRef={nodesRef} />
       <GraphNodes   graphData={graphData} nodesRef={nodesRef} simRef={simRef} orbitRef={orbitRef} dragRef={dragRef} dirtyRef={dirtyRef} />
+      <NodeLabels   graphData={graphData} nodesRef={nodesRef} dirtyRef={dirtyRef} />
       <Dragger nodesRef={nodesRef} simRef={simRef} orbitRef={orbitRef} dragRef={dragRef} dirtyRef={dirtyRef} />
 
       <EffectComposer>
