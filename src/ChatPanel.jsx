@@ -1,7 +1,87 @@
-import { useRef, useEffect, useState, useCallback } from 'react'
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { useStore } from './store'
 import { api } from './api'
+
+const VOICEOS_URL = 'https://beta.api.voiceos.com/v1/audio/transcriptions'
+
+// Picks the best supported MIME type for MediaRecorder
+function getSupportedMime() {
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/ogg',
+  ]
+  return candidates.find(m => MediaRecorder.isTypeSupported(m)) ?? ''
+}
+
+// Records mic audio, transcribes via VoiceOS, calls onTranscript(text)
+function useSpeechInput(onTranscript, personNames) {
+  const [recState, setRecState] = useState('idle') // 'idle' | 'recording' | 'transcribing'
+  const recRef    = useRef(null)
+  const chunksRef = useRef([])
+
+  const start = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const mime   = getSupportedMime()
+      const rec    = new MediaRecorder(stream, mime ? { mimeType: mime } : {})
+      chunksRef.current = []
+
+      rec.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+
+      rec.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        const blob = new Blob(chunksRef.current, { type: mime || 'audio/webm' })
+        setRecState('transcribing')
+        try {
+          const fd = new FormData()
+          fd.append('file', blob, 'query.webm')
+          fd.append('language', 'en')
+          if (personNames.length > 0) {
+            // VoiceOS custom_dictionary helps it recognise participant names
+            fd.append('custom_dictionary', JSON.stringify(personNames))
+          }
+          const res  = await fetch(VOICEOS_URL, { method: 'POST', body: fd })
+          if (!res.ok) throw new Error(`VoiceOS ${res.status}`)
+          const data = await res.json()
+          onTranscript(data.text ?? data.transcript ?? '')
+        } catch (err) {
+          console.error('VoiceOS transcription error:', err)
+          toast('Transcription failed — check console', 'error')
+        } finally {
+          setRecState('idle')
+        }
+      }
+
+      rec.start()
+      recRef.current = rec
+      setRecState('recording')
+    } catch (err) {
+      console.error('Mic access denied:', err)
+      toast('Microphone access denied', 'error')
+    }
+  }, [onTranscript, personNames])
+
+  const stop = useCallback(() => recRef.current?.stop(), [])
+
+  const toggle = useCallback(() => {
+    if (recState === 'idle')      start()
+    else if (recState === 'recording') stop()
+  }, [recState, start, stop])
+
+  return { recState, toggle }
+}
+
+function toast(msg, type = '') {
+  const el = document.getElementById('toast')
+  if (!el) return
+  el.textContent = msg
+  el.className   = `toast ${type} show`
+  clearTimeout(el._t)
+  el._t = setTimeout(() => el.classList.remove('show'), 3000)
+}
 
 function Message({ msg, onSourceClick }) {
   if (msg.role === 'thinking') {
@@ -59,6 +139,17 @@ export function ChatPanel() {
   const [input,  setInput]  = useState('')
   const [mode,   setMode]   = useState('local')   // 'local' | 'global'
   const boxRef = useRef(null)
+
+  // Extract PERSON node names to improve VoiceOS transcription accuracy
+  const personNames = useMemo(
+    () => graphData.nodes.filter(n => n.type === 'PERSON').map(n => n.label).filter(Boolean),
+    [graphData.nodes]
+  )
+
+  const { recState, toggle: toggleMic } = useSpeechInput(
+    text => { if (text) setInput(prev => prev ? `${prev} ${text}` : text) },
+    personNames
+  )
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -165,13 +256,36 @@ export function ChatPanel() {
         className="query-form"
         onSubmit={e => { e.preventDefault(); submit() }}
       >
+        <button
+          type="button"
+          className={`mic-btn mic-btn--${recState}`}
+          onClick={toggleMic}
+          title={recState === 'idle' ? 'Speak your query (VoiceOS)' : recState === 'recording' ? 'Stop recording' : 'Transcribing…'}
+        >
+          {recState === 'transcribing' ? (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mic-spin">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+            </svg>
+          ) : recState === 'recording' ? (
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="4" y="4" width="16" height="16" rx="2"/>
+            </svg>
+          ) : (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8"  y1="23" x2="16" y2="23"/>
+            </svg>
+          )}
+        </button>
         <input
           id="query-input"
           className="query-input"
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="What does this knowledge base say about…"
+          placeholder={recState === 'recording' ? 'Listening…' : recState === 'transcribing' ? 'Transcribing…' : 'Ask your graph, or click 🎙 to speak'}
           autoComplete="off"
           spellCheck={false}
         />

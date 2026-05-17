@@ -32,6 +32,7 @@ export function Sidebar() {
   const graphData    = useStore(s => s.graphData)
   const backendOk    = useStore(s => s.backendOk)
   const setBackendOk = useStore(s => s.setBackendOk)
+  const setPage      = useStore(s => s.setPage)
 
   const [fileName,    setFileName]    = useState('')
   const [uploading,   setUploading]   = useState(false)
@@ -114,8 +115,8 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      {/* Logo */}
-      <div className="logo">
+      {/* Logo — click to go home */}
+      <div className="logo" style={{ cursor: 'pointer' }} onClick={() => setPage('home')}>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
           <circle cx="12" cy="12" r="3"  fill="#B8422E" />
           <circle cx="4"  cy="6"  r="1.8" fill="#6C7278" />
@@ -129,6 +130,22 @@ export function Sidebar() {
         </svg>
         <span className="logo-text">CONTEXT GRAPH</span>
       </div>
+
+      {/* Page navigation */}
+      <div className="nav-tabs">
+        <button className="nav-tab active" onClick={() => setPage('graph')}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>
+          Graph
+        </button>
+        <button className="nav-tab" onClick={() => setPage('dashboard')}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+          Analytics
+        </button>
+      </div>
+      <button className="nav-home-link" onClick={() => setPage('home')}>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Back to Home
+      </button>
 
       {/* Upload */}
       <div className="sidebar-section">

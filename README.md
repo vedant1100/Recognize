@@ -12,6 +12,7 @@
 [![React](https://img.shields.io/badge/Frontend-React-61dafb)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688)](https://fastapi.tiangolo.com/)
 [![Deployed on Zeabur](https://img.shields.io/badge/Deployed%20on-Zeabur-black)](https://zeabur.com(In Process)
+[![Built with AdaL](https://img.shields.io/badge/Built%20with-AdaL-6366f1)](https://sylph.ai/)
 
 ---
 
@@ -159,7 +160,7 @@ Meeting Transcript → AI Entity Extraction → Knowledge Graph → Semantic Sea
 
 ## 🏆 Hackathon Sponsor Tools Integration
 
-We've integrated **2 sponsor tools** to build a production-ready platform:
+We've integrated **3 sponsor tools** to build a production-ready platform:
 
 
 
@@ -176,6 +177,12 @@ We've integrated **2 sponsor tools** to build a production-ready platform:
 **Why**: Cost optimization and reliability with automatic failover  
 **Impact**: 40% cost reduction with response caching, 99.9% uptime with fallback models  
 **Integration**: LLM request routing layer for production reliability
+
+### 3. **[AdaL (Sylph AI)](https://sylph.ai/)** 🤖 (AI Coding Agent)
+**Usage**: Used AdaL as the AI coding agent throughout development  
+**Why**: AdaL's multi-model support (Claude, GPT, Gemini) and MCP server integration accelerated building complex features like the GraphRAG pipeline and 3D visualization  
+**Impact**: Faster iteration on the knowledge graph backend and frontend 3D scene — features that would have taken days were built in hours  
+**Integration**: Development tooling — used to scaffold, debug, and refine the entire Recognize codebase
 
 
 
@@ -378,6 +385,7 @@ Special thanks to our hackathon sponsors:
 - **AgentField** for multi-agent orchestration
 - **TokenRouter** for smart model routing
 - **Evermind** for persistent memory capabilities
+- **AdaL / Sylph AI** for AI-assisted development throughout the build
 
 
 
