@@ -339,7 +339,7 @@ Upload these to see Recognize in action with real team conversations!
 - **Vedant** - Product Lead & Strategy
 - **Tarang** - Backend Engineer & AI Integration
 - **Rishi** - Data Engineer & Graph Architecture
-- **Jay** - Frontend Engineer & 3D Visualization
+- **Jay** - Backend Engineer & 3D Visualization 
 
 ---
 
@@ -349,16 +349,7 @@ MIT License - see [LICENSE](LICENSE) for details
 
 ---
 
-## 🙏 Acknowledgments
 
-Special thanks to our hackathon sponsors:
-- **Groq** for blazing-fast LLM inference
-- **Neo4j** for powerful graph database technology
-
-- **AgentField** for multi-agent orchestration
-- **TokenRouter** for smart model routing
-- **Evermind** for persistent memory capabilities
-- **AdaL / Sylph AI** for AI-assisted development throughout the build
 
 
 
