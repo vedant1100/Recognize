@@ -1,0 +1,65 @@
+Recognize — Full Product Description
+
+Recognize is a real-time meeting intelligence system built for Google Meet. It does three things simultaneously: it identifies who is speaking in a meeting at the word level, it transcribes everything they say, and it feeds all of that into a persistent knowledge graph that accumulates institutional memory across every meeting a team has ever had. The knowledge graph is then queryable in plain language, visualized in 3D, and used to automatically debrief participants after each session.
+
+---
+
+Part 1: Real-Time Speaker Diarization
+
+The diarization system runs as a Chrome extension paired with a local Python server.
+
+The Chrome Extension connects to the user's Google Meet tab using the chrome.tabCapture API, which gives it access to the full tab's audio and video stream without requiring any special hardware or external microphone. It captures video as JPEG frames and audio as raw PCM chunks, then streams both over WebSocket to a Python server running at ws://localhost:8765. The extension also renders a live overlay in the Meet tab showing each detected person's label and a speaking indicator, and lets the user rename participants (e.g. person_1 → "Jay") during the meeting.
+
+The Python Server runs two parallel pipelines that share a single monotonic clock anchored at server startup.
+
+The video pipeline receives JPEG frames from the extension, decodes them, and passes each frame through MediaPipe's FaceLandmarker model. MediaPipe returns 478 facial landmarks per detected face. From those landmarks, the system computes a Mouth Aspect Ratio (MAR) — the ratio of vertical lip distance to horizontal mouth width — for each face in the frame. Faces are tracked across frames using a two-phase matching strategy: IoU matching first (bounding box overlap), then centroid distance as fallback for faces that weren't matched by overlap. This gives each face a persistent track ID across the session. After 30 frames, when tracking has stabilized, the system locks the identity map: it sorts all currently visible faces left-to-right by their horizontal position in the frame and assigns them permanent labels — person_1, person_2, and so on. These identities don't change for the rest of the session. New faces that appear after the lock get incremental labels (person_7, etc.) once they've been stably tracked for 15 frames.
+
+For each face in each frame, the system maintains a rolling window of the last 12 MAR values. The variance of that window determines whether a face is speaking: if the variance exceeds a threshold, the mouth is moving enough to be considered active. The face with the highest MAR variance at any given moment is flagged as the active speaker, and that event is written to a 10-second rolling timeline keyed by timestamp.
+
+The audio pipeline receives PCM audio from the extension (or optionally from the machine's microphone via sounddevice), resamples it to 16kHz if necessary, and accumulates it in a ring buffer. Every 5 seconds, a 6-second window of audio is packaged as a WAV file and sent to Groq's Whisper API (whisper-large-v3-turbo) for transcription. Crucially, before sending, the system checks the audio's peak amplitude — if it's below 2000 out of 32768, the chunk is silent and gets discarded. This prevents Whisper from hallucinating transcriptions over silence and conserves API quota. Whisper returns a verbose JSON response with word-level timestamps. Those words are placed into a queue.
+
+Attribution happens in the sync layer. When a word arrives from the Whisper queue, the diarizer looks up who was speaking in the MAR timeline during a ±300ms window around that word's start and end timestamps. The most frequently occurring speaker label in that window wins. If no speaker appears in the timeline for that window (the face may have been off-screen), the system falls back to whoever spoke most recently. If more than 900ms has passed since the last word, that fallback is cleared — treating long pauses as natural turn boundaries. The first 2 seconds of every session emit "unknown" regardless, to avoid cold-start noise before the face tracker has stabilized.
+
+Each attributed word is broadcast over WebSocket back to the extension (where it appears in the Meet overlay) and to a separate /feed WebSocket endpoint that the React dashboard listens to.
+
+When the meeting ends and the extension disconnects, the server takes the complete word log, saves it as a plain-text transcript file, converts it to a structured Markdown file grouping consecutive words from the same speaker into utterances, and automatically POSTs both files to the GraphRAG backend for ingestion into the knowledge graph.
+
+---
+
+Part 2: The Knowledge Graph
+
+The backend is a FastAPI server that uses Neo4j as its graph database. Everything — meeting transcripts, uploaded documents, extracted entities, relationships between entities, community summaries — lives in Neo4j and persists indefinitely across sessions.
+
+Ingestion works the same way regardless of whether the source is a manually uploaded file or an auto-uploaded meeting transcript. The system accepts PDF, DOCX, plain text, and Markdown. It extracts the full text, cleans and chunks it into 600-character segments with 80-character overlap, then runs all chunks through Claude in parallel. For each chunk, Claude extracts structured entities (typed as PERSON, ORGANIZATION, CONCEPT, PLACE, TECHNOLOGY, or EVENT, each with a one-sentence description) and relationships between them (expressed as verb phrases connecting two entities). All chunk texts and entity descriptions are then batch-encoded into 384-dimensional embedding vectors using the all-MiniLM-L6-v2 sentence transformer model.
+
+Before writing a new entity to Neo4j, the system queries the vector index for any existing entity whose embedding has a cosine similarity of 0.90 or higher with the new one. If a match is found, the new mention is merged into the existing entity — its mention count increments, and its description is upgraded if the new one is longer. This deduplication means that "machine learning" and "ML" extracted from two different meetings will converge into a single node rather than spawning duplicates. Entities that keep getting discussed accumulate higher mention counts, which the visualization uses to scale their visual weight. Relationships between entities are stored as RELATES_TO edges with a weight property that increments each time the same relationship appears across different source chunks.
+
+Every chunk is also stored as a Chunk node connected to its source Document and to all entities mentioned within it via MENTIONS edges. This bidirectional structure means that when Claude later finds a relevant entity during a query, it can immediately walk to all the source text that produced that entity.
+
+Post-meeting pipeline. When a meeting recording ends, the transcript words are sent to the /api/session/finalize endpoint. The backend groups consecutive words by the same speaker into utterances, then sends the full transcript to Claude with a structured prompt to generate Minutes of Meeting: a summary, key discussion points, decisions made, and an action items table. Both the raw transcript markdown and the MoM markdown are then ingested into the graph as separate documents in parallel, so the graph contains both the verbatim record and Claude's structured interpretation of the same meeting.
+
+After ingestion, a debrief agent runs asynchronously via AgentField. It queries the graph for entities and decisions from the current meeting that may contradict decisions recorded in past meetings, and cross-references action items against still-open items from prior sessions. It then sends a formatted HTML email to the meeting's participants listing the summary, any contradictions found, and the full action item table annotated with historical context.
+
+Querying. The system supports two distinct query modes. In local mode, the user's natural-language question is embedded into the same 384-dimensional space using the same sentence transformer model. Neo4j's vector index returns the k entity nodes with the highest cosine similarity to that query embedding. From those entities, the system performs a 1-hop graph traversal to collect all directly related entities and their relationships, then pulls the raw source chunks that mention those entities. All of this — entity descriptions, relationship triples, and source text — is assembled into a structured context block and sent to Claude, which synthesizes a cited answer. In global mode, the system runs Louvain community detection over the entity graph using NetworkX, assigns each discovered cluster a Claude-generated summary (stored back in Neo4j), and answers holistic questions by reasoning over those community summaries rather than individual entities.
+
+---
+
+Part 3: The 3D Knowledge Graph Visualization
+
+The React frontend renders the full Neo4j graph as a live, interactive 3D scene using Three.js and React Three Fiber. The force-directed layout is computed by a D3 simulation running in a web worker, and the visual rendering uses instanced meshes for performance — all entity nodes are rendered in a single instanced sphere draw call, all chunk nodes in a single instanced icosahedron draw call. Entity nodes are colored by type: CONCEPT nodes are Boston Clay red, PERSON nodes are amber, ORGANIZATION nodes are blue, PLACE nodes are green, TECHNOLOGY nodes are teal, EVENT nodes are gold, and CHUNK nodes (raw text segments) are purple. Node sizes scale with connection degree — heavily referenced entities appear larger.
+
+The edges between nodes are rendered as a single lineSegments geometry that updates every animation frame as the force simulation moves nodes. Animated "neural pulses" — small glowing spheres that travel along edges — provide a sense of live information flow. The scene has bloom post-processing (making all emissive surfaces glow), depth fog, a starfield background, and vignetting. The entire aesthetic mirrors the app's own design system: deep space dark background, Boston Clay red as the primary accent color, warm limestone text.
+
+Users can click any node to select it; a pulsing wireframe ring appears around it. Clicking a node in the graph also highlights the corresponding entity in the chat panel's source cards. Nodes are draggable — pinning them while the simulation continues running for the rest of the graph. The camera supports full orbit, pan, and zoom via OrbitControls.
+
+The sidebar shows live graph statistics (entity count, relationship count, chunk count, community count) with an entity type legend. Users can drag-and-drop files to ingest them and trigger community detection. The chat panel supports local and global query modes with a toggle, renders Claude's responses as Markdown, and clicking a source citation in a response highlights the corresponding node in the 3D graph.
+
+A floating "Live Transcript" panel connects to the diarization server's /feed WebSocket and displays the real-time attributed word stream — color-coded per speaker, with word counts and a live/offline indicator.
+
+---
+
+What It Solves
+
+The speaker diarization problem — attributing words to specific people in a real-time multi-person conversation from a single camera and single microphone, with no speaker enrollment and no dedicated hardware — has been open in academic and industry research since the 1990s. Classical solutions require microphone arrays, pre-recorded voice profiles, or cloud services that process audio in batch with significant latency. Recognize solves it geometrically: by tracking lip movement per face using MediaPipe's landmark model and correlating the resulting activity signal with Groq Whisper's word timestamps, the system attributes speech without ever analyzing voice signatures.
+
+The institutional memory problem — companies losing knowledge every time a meeting ends because there is no system that automatically captures, connects, and preserves what was discussed — is solved by treating the knowledge graph as the durable artifact rather than the transcript. Every meeting, every document, every decision automatically joins the same persistent relational structure. Entities deduplicate. Relationships accumulate weight. Communities of related concepts emerge. The graph becomes a map of what the organization actually thinks about, derived bottom-up from everything it has ever said.

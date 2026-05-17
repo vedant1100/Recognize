@@ -1,28 +1,31 @@
 <!doctype html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Jaylogic</title>
-    <link rel="stylesheet" href="popup.css" />
-  </head>
-  <body>
-    <main>
-      <h1>Jaylogic</h1>
-      <label class="row" for="wsUrl">
-        Backend WS
-        <input id="wsUrl" type="text" value="ws://localhost:8765/ws" />
-      </label>
 
-      <div class="row buttons">
-        <button id="startBtn">Start</button>
-        <button id="stopBtn" class="secondary">Stop</button>
-      </div>
+<head>
+  <meta charset="utf-8" />
+  <title>Recognize.AI</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
 
-      <p id="status">Idle</p>
-      <p id="speakers"></p>
+<body>
+  <main>
+    <h1>Recognize.AI</h1>
+    <label class="row" for="wsUrl">
+      Endpoint
+      <input id="wsUrl" type="text" value="ws://localhost:8765/ws" />
+    </label>
 
-      <div id="transcript" aria-live="polite"></div>
-    </main>
-    <script src="popup.js"></script>
-  </body>
+    <div class="row buttons">
+      <button id="startBtn">Start</button>
+      <button id="stopBtn" class="secondary">Stop</button>
+    </div>
+
+    <p id="status">Idle</p>
+    <p id="speakers"></p>
+
+    <div id="transcript" aria-live="polite"></div>
+  </main>
+  <script src="popup.js"></script>
+</body>
+
 </html>

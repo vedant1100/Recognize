@@ -6,7 +6,10 @@
       "Bash(gh repo *)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(git clone *)"
+      "Bash(git clone *)",
+      "Bash(python3 -c \"import pptx; print\\(pptx.__version__\\)\")",
+      "Bash(python3 *)",
+      "Bash(open *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\rishi\\.claude\\projects\\c--Users-rishi-Downloads-recognize\\memory",

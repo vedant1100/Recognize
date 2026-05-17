@@ -16,7 +16,7 @@ if (!window.__jaylogicContentLoaded) {
   let hiddenVideo = null;
   let frameCanvas = null;
   let frameCtx = null;
-  
+
   let faceCount = 0;
   let lastSpeaker = null;
 
@@ -29,7 +29,7 @@ if (!window.__jaylogicContentLoaded) {
   panel.id = "jaylogic-panel";
   panel.innerHTML = `
     <div class="jl-header">
-      <span class="jl-title">Jaylogic</span>
+      <span class="jl-title">Recognize.AI</span>
       <span class="jl-status disconnected" id="jl-status">Offline</span>
     </div>
     <div class="jl-body">
@@ -103,7 +103,7 @@ if (!window.__jaylogicContentLoaded) {
             document.getElementById("jl-face-count").textContent = count;
           }
           if (msg.tracks && msg.bounding_boxes) {
-             renderTracks(msg.tracks);
+            renderTracks(msg.tracks);
           }
         }
 
@@ -117,7 +117,7 @@ if (!window.__jaylogicContentLoaded) {
         if (msg.speaker && msg.word) {
           appendTranscript(msg.speaker, msg.word);
         }
-      } catch (_) {}
+      } catch (_) { }
     };
 
     ws.onclose = () => {
@@ -156,7 +156,7 @@ if (!window.__jaylogicContentLoaded) {
     frameCtx = frameCanvas.getContext("2d");
 
     hiddenVideo.addEventListener("loadedmetadata", () => {
-      hiddenVideo.play().catch(() => {});
+      hiddenVideo.play().catch(() => { });
       // Send 10 frames per second to match lip pipeline requirement
       frameLoopId = setInterval(sendFrame, 100);
     });
@@ -170,7 +170,7 @@ if (!window.__jaylogicContentLoaded) {
       const dataUrl = frameCanvas.toDataURL("image/jpeg", 0.6);
       const base64 = dataUrl.split(",")[1];
       ws.send(JSON.stringify({ ts_ms: Date.now(), frame: base64 }));
-    } catch (_) {}
+    } catch (_) { }
   }
 
   // ── Recording ─────────────────────────────────────────────────────────────
@@ -213,10 +213,10 @@ if (!window.__jaylogicContentLoaded) {
       container.style.cssText = "position:absolute; inset:0; pointer-events:none;";
       overlayRoot.appendChild(container);
     }
-    
+
     // We want to reuse input elements so they don't lose focus
     const currentTids = new Set(tracks.map(t => t.track_id));
-    
+
     // Remove stale
     Array.from(container.children).forEach(child => {
       if (!currentTids.has(child.dataset.tid)) {
@@ -227,55 +227,62 @@ if (!window.__jaylogicContentLoaded) {
     tracks.forEach(t => {
       let box = document.getElementById("box-" + t.track_id);
       let wrap = document.getElementById("wrap-" + t.track_id);
-      
+
       if (!box) {
         box = document.createElement("div");
         box.id = "box-" + t.track_id;
         box.className = "jaylogic-box";
         box.dataset.tid = t.track_id;
-        
+
         wrap = document.createElement("div");
         wrap.id = "wrap-" + t.track_id;
         wrap.className = "jaylogic-name-wrap";
         wrap.dataset.tid = t.track_id;
-        
+        wrap.dataset.speaker = t.speaker;  // will be updated each render
+
         const input = document.createElement("input");
         input.className = "jaylogic-name-input";
         input.type = "text";
         input.placeholder = "Enter Name...";
-        
+
         input.addEventListener("keydown", (e) => {
           e.stopPropagation();
           if (e.key === "Enter") {
-            input.blur();
-            console.log("[jaylogic] Sending set_name:", t.speaker, "->", input.value);
-            if (ws && ws.readyState === WebSocket.OPEN) {
+            // Read the CURRENT speaker from the data attribute, not the stale closure
+            const currentSpeaker = wrap.dataset.speaker;
+            const newName = input.value.trim();
+            console.log("[jaylogic] Sending set_name:", currentSpeaker, "->", newName);
+            if (ws && ws.readyState === WebSocket.OPEN && currentSpeaker) {
               ws.send(JSON.stringify({
                 event: "set_name",
-                speaker: t.speaker,
-                name: input.value
+                speaker: currentSpeaker,
+                name: newName
               }));
             }
+            input.blur();
           }
         });
 
         ["pointerdown", "click", "keyup", "keypress"].forEach(evt => {
           input.addEventListener(evt, e => e.stopPropagation());
         });
-        
+
         wrap.appendChild(input);
         container.appendChild(box);
         container.appendChild(wrap);
       }
-      
+
+      // Always keep the speaker data attribute current
+      wrap.dataset.speaker = t.speaker;
+
       const input = wrap.querySelector("input");
       const isFocused = document.activeElement === input;
-      
+
       if (!isFocused) {
         input.value = t.name || t.speaker;
         input.placeholder = t.speaker;
       }
-      
+
       if (t.is_speaking) {
         box.style.borderColor = "#ff4444";
         box.style.boxShadow = "0 0 10px rgba(255, 68, 68, 0.5)";
@@ -283,19 +290,19 @@ if (!window.__jaylogicContentLoaded) {
         box.style.borderColor = "#11c26d";
         box.style.boxShadow = "0 0 0 1px rgba(0, 0, 0, 0.35)";
       }
-      
+
       const [x, y, w, h] = t.bbox;
       const scaleX = window.innerWidth / 640;
       const scaleY = window.innerHeight / 360;
-      
+
       const finalX = x * scaleX;
       const finalY = y * scaleY;
-      
+
       box.style.left = finalX + "px";
       box.style.top = finalY + "px";
       box.style.width = (w * scaleX) + "px";
       box.style.height = (h * scaleY) + "px";
-      
+
       // Freeze the input box position if the user is typing in it!
       if (!isFocused) {
         wrap.style.left = finalX + "px";
