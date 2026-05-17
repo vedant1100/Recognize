@@ -37,5 +37,15 @@ export const api = {
   // Run Louvain community detection + generate summaries (slow, call once after upload)
   buildCommunities: () => req('/communities/build', { method: 'POST' }),
 
+  transcribe: (file, personNames = []) => {
+    const fd = new FormData()
+    fd.append('file', file, 'query.webm')
+    fd.append('language', 'en')
+    if (personNames.length > 0) {
+      fd.append('custom_dictionary', JSON.stringify(personNames))
+    }
+    return req('/transcribe', { method: 'POST', body: fd })
+  },
+
   deleteDocument: (id) => req(`/documents/${id}`, { method: 'DELETE' }),
 }

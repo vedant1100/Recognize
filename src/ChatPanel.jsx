@@ -43,10 +43,21 @@ function useSpeechInput(onTranscript, personNames) {
             // VoiceOS custom_dictionary helps it recognise participant names
             fd.append('custom_dictionary', JSON.stringify(personNames))
           }
-          const res  = await fetch(VOICEOS_URL, { method: 'POST', body: fd })
-          if (!res.ok) throw new Error(`VoiceOS ${res.status}`)
-          const data = await res.json()
-          onTranscript(data.text ?? data.transcript ?? '')
+
+          let text = ''
+          const res = await fetch(VOICEOS_URL, { method: 'POST', body: fd })
+          if (res.ok) {
+            const data = await res.json()
+            text = data.text ?? data.transcript ?? ''
+          } else if (res.status === 401) {
+            const fallback = await api.transcribe(blob, personNames)
+            text = fallback.text ?? fallback.transcript ?? ''
+            toast('VoiceOS unauthorized — switched to Groq fallback', 'error')
+          } else {
+            throw new Error(`VoiceOS ${res.status}`)
+          }
+
+          onTranscript(text)
         } catch (err) {
           console.error('VoiceOS transcription error:', err)
           toast('Transcription failed — check console', 'error')

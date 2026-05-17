@@ -11,7 +11,6 @@
 [![Neo4j](https://img.shields.io/badge/Database-Neo4j-blue)](https://neo4j.com/)
 [![React](https://img.shields.io/badge/Frontend-React-61dafb)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688)](https://fastapi.tiangolo.com/)
-[![Deployed on Zeabur](https://img.shields.io/badge/Deployed%20on-Zeabur-black)](https://zeabur.com(In Process)
 [![Built with AdaL](https://img.shields.io/badge/Built%20with-AdaL-6366f1)](https://sylph.ai/)
 
 ---
@@ -119,7 +118,7 @@ Meeting Transcript → AI Entity Extraction → Knowledge Graph → Semantic Sea
 🎨 **Visual Intelligence**: 3D brain visualization shows knowledge structure  
 ⚡ **Real-Time Processing**: Groq's LPU enables instant entity extraction (300+ tokens/sec)  
 🌐 **Multilingual Support**: Works with English, Hindi, Urdu, Hinglish, and more  
-📈 **Scalable Architecture**: Production-ready from day one with Neo4j + Zeabur  
+📈 **Scalable Architecture**: Production-ready from day one with Neo4j + cloud deployment  
 
 ---
 
@@ -160,19 +159,10 @@ Meeting Transcript → AI Entity Extraction → Knowledge Graph → Semantic Sea
 
 ## 🏆 Hackathon Sponsor Tools Integration
 
-We've integrated **3 sponsor tools** to build a production-ready platform:
+We've integrated **2 sponsor tools** to build a production-ready platform:
 
 
-
-
-### 1. **[Zeabur](https://zeabur.com/)** 🚀 (Deployment Platform)
-**Usage**: One-click deployment for production  
-**Why**: Simplified DevOps with automatic scaling and zero configuration  
-**Impact**: Deploy in <5 minutes with auto-scaling based on traffic  
-**Integration**: Hosting for both frontend and backend services
-
-
-### 2. **[TokenRouter](https://tokenrouter.ai/)** 🔀 (Model Routing & Optimization)
+### 1. **[TokenRouter](https://tokenrouter.ai/)** 🔀 (Model Routing & Optimization)
 **Usage**: Smart routing between AI models with caching and fallback  
 **Why**: Cost optimization and reliability with automatic failover  
 **Impact**: 40% cost reduction with response caching, 99.9% uptime with fallback models  
@@ -199,9 +189,9 @@ We've integrated **3 sponsor tools** to build a production-ready platform:
 
 **Production Scale** (with current architecture):
 - 📈 **10M+ entities** (Neo4j can handle billions)
-- 📈 **100+ concurrent users** (FastAPI async + Zeabur auto-scaling)
+- 📈 **100+ concurrent users** (FastAPI async + cloud auto-scaling)
 - 📈 **1000+ meetings/day** (Groq processes 300+ tokens/sec)
-- 📈 **99.9% uptime** (TokenRouter fallback + Zeabur redundancy)
+- 📈 **99.9% uptime** (TokenRouter fallback + redundant deployment)
 
 ### Feature Roadmap
 
@@ -386,6 +376,7 @@ Special thanks to our hackathon sponsors:
 - **TokenRouter** for smart model routing
 - **Evermind** for persistent memory capabilities
 - **AdaL / Sylph AI** for AI-assisted development throughout the build
+
 
 
 

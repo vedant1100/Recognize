@@ -229,6 +229,145 @@ function AnalyticsIllustration() {
   )
 }
 
+/* ── Google Meet mockup ──────────────────────────── */
+function MeetMockup() {
+  const tiles = [
+    { initials: 'JS', name: 'John Smith',  color: '#4a90d9', speaking: true  },
+    { initials: 'SL', name: 'Sarah Lee',   color: '#9b6dff', speaking: false },
+    { initials: 'AK', name: 'Aryan K.',    color: '#5cb87a', speaking: false },
+    { initials: 'MP', name: 'Miguel P.',   color: '#d48a50', speaking: false },
+  ]
+  const lines = [
+    { speaker: 'John Smith',  color: '#4a90d9', text: '"the diarization pipeline attributes at the word level — no hardware required."', active: true  },
+    { speaker: 'Sarah Lee',   color: '#9b6dff', text: '"tested across 6-person calls with overlapping speech, accuracy held at 91%."',  active: false },
+    { speaker: 'Aryan K.',    color: '#5cb87a', text: '"graph query latency is under 800ms with Neo4j full-text indexing."',           active: false },
+  ]
+  return (
+    <div className="home-meet-mockup">
+      <div className="home-meet-chrome">
+        <div className="home-meet-dots">
+          <span className="home-meet-dot" style={{background:'#ff5f57'}}/>
+          <span className="home-meet-dot" style={{background:'#febc2e'}}/>
+          <span className="home-meet-dot" style={{background:'#28c840'}}/>
+        </div>
+        <div className="home-meet-url">
+          <span className="home-meet-lock">🔒</span>
+          meet.google.com/xyz-abc-def
+        </div>
+      </div>
+      <div className="home-meet-body">
+        <div className="home-meet-grid">
+          {tiles.map((t, i) => (
+            <div key={i} className={`home-meet-tile${t.speaking ? ' home-meet-tile--active' : ''}`}
+              style={t.speaking ? {'--tile-color': t.color} : {}}>
+              <div className="home-meet-avatar" style={{background:`linear-gradient(135deg,${t.color}cc,${t.color}44)`}}>
+                {t.initials}
+              </div>
+              <div className="home-meet-tile-name">{t.name}</div>
+              {t.speaking && (
+                <div className="home-meet-badge">
+                  <span className="home-meet-badge-dot"/>SPEAKING
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="home-meet-sidebar">
+          <div className="home-meet-sidebar-header">
+            <span className="home-meet-rec-dot"/>
+            <span>RECOGNIZE LIVE</span>
+          </div>
+          <div className="home-meet-transcript">
+            {lines.map((l, i) => (
+              <div key={i} className={`home-meet-line${l.active ? ' home-meet-line--active' : ''}`}>
+                <span className="home-meet-line-dot" style={{background:l.color}}/>
+                <div>
+                  <div className="home-meet-line-speaker" style={{color:l.color}}>{l.speaker}</div>
+                  <div className="home-meet-line-text">{l.text}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="home-meet-sidebar-footer">
+            478 landmarks · 24 fps · &lt;200ms latency
+          </div>
+        </div>
+      </div>
+      <div className="home-meet-bottombar">
+        <div className="home-meet-ctrls">
+          <div className="home-meet-ctrl-btn">🎤</div>
+          <div className="home-meet-ctrl-btn">📷</div>
+          <div className="home-meet-ctrl-btn home-meet-ctrl-end">✕</div>
+        </div>
+        <div className="home-meet-live-status">
+          <span className="home-meet-rec-dot"/>
+          Recognize capturing — 4 entities extracted this session
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── Data nodes mockup ───────────────────────────── */
+function DataNodesMockup() {
+  const groups = [
+    { type:'PERSON',        color:'#d48a50', nodes:[
+      { label:'John Smith',        mentions:45, links:12, pct:78 },
+      { label:'Sarah Lee',         mentions:31, links:8,  pct:54 },
+    ]},
+    { type:'TOPIC',         color:'#9b6dff', nodes:[
+      { label:'Machine Learning',  mentions:38, links:6,  pct:66 },
+      { label:'GraphRAG Queries',  mentions:22, links:5,  pct:38 },
+    ]},
+    { type:'ORGANIZATION',  color:'#4a90d9', nodes:[
+      { label:'Acme Corp',         mentions:17, links:8,  pct:30 },
+      { label:'Neo4j Inc.',        mentions:14, links:4,  pct:24 },
+    ]},
+    { type:'DECISION',      color:'#5cb87a', nodes:[
+      { label:'Q3 Roadmap Final',  mentions:23, links:9,  pct:40 },
+      { label:'Adopt GraphRAG',    mentions:11, links:3,  pct:19 },
+    ]},
+  ]
+  return (
+    <div className="home-nodes-mockup">
+      <div className="home-nodes-grid">
+        {groups.map((g, i) => (
+          <div key={i} className="home-nodes-col">
+            <div className="home-nodes-type" style={{color:g.color}}>{g.type}</div>
+            {g.nodes.map((n, j) => (
+              <div key={j} className="home-node-card" style={{'--nc': g.color}}>
+                <div className="home-node-header">
+                  <span className="home-node-dot" style={{background:g.color}}/>
+                  <span className="home-node-name">{n.label}</span>
+                </div>
+                <div className="home-node-meta">
+                  <span>{n.mentions} mentions</span><span>{n.links} links</span>
+                </div>
+                <div className="home-node-bar">
+                  <div className="home-node-fill" style={{width:`${n.pct}%`, background:`linear-gradient(90deg,${g.color},${g.color}66)`}}/>
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="home-nodes-query">
+        <div className="home-nodes-query-label">GraphRAG · Ask anything</div>
+        <div className="home-nodes-query-input">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9b6dff" strokeWidth="2">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          What did John Smith say about machine learning?
+        </div>
+        <div className="home-nodes-answer">
+          <span className="home-nodes-answer-tag">Cited · 0.6 s</span>
+          <p>"John Smith proposed using a transformer-based embedding layer for node deduplication (AI Summit, 14 May). He referenced TensorFlow's sparse attention as a baseline and flagged inference latency as a production concern."</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /* ── Feature card ────────────────────────────────── */
 function FeatureCard({ icon, title, body, accent = '#B8422E' }) {
   return (
@@ -359,46 +498,6 @@ export function Home() {
           </button>
         </section>
 
-        {/* ── How it works ── */}
-        <section className="home-section">
-          <div className="home-section-label">HOW IT WORKS</div>
-          <h2 className="home-section-title">Three systems. One unified picture.</h2>
-          <div className="home-features-grid">
-            <FeatureCard
-              accent="#d48a50"
-              icon={
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
-                </svg>
-              }
-              title="Real-Time Diarization"
-              body="A Chrome extension captures your Google Meet tab's audio and video. MediaPipe tracks lip movement per face frame-by-frame. Groq Whisper transcribes every word with timestamps. The sync layer matches words to faces geometrically — no voice enrollment, no special hardware."
-            />
-            <FeatureCard
-              accent="#4a90d9"
-              icon={
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <circle cx="12" cy="5"  r="3"/><circle cx="5"  cy="19" r="3"/><circle cx="19" cy="19" r="3"/>
-                  <line x1="12" y1="8" x2="5"  y2="16"/><line x1="12" y1="8" x2="19" y2="16"/>
-                </svg>
-              }
-              title="Persistent Knowledge Graph"
-              body="Every meeting auto-ingests into Neo4j. Claude extracts typed entities and relationships from every chunk. Embeddings deduplicate — 'ML' and 'machine learning' merge into one node. Communities emerge. The graph accumulates across every session your team has ever had."
-            />
-            <FeatureCard
-              accent="#9b6dff"
-              icon={
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                </svg>
-              }
-              title="3D Graph Visualization"
-              body="A force-directed D3 simulation drives a Three.js scene with instanced meshes, bloom post-processing, depth fog, neural pulse animations, and a starfield. Nodes scale with mention count. Click to select, drag to pin, orbit to explore the full topology."
-            />
-          </div>
-        </section>
-
         {/* ── What it solves ── */}
         <section className="home-section">
           <div className="home-section-label">WHAT IT SOLVES</div>
@@ -441,22 +540,90 @@ export function Home() {
           </div>
         </section>
 
-        {/* ── Pipeline strip ── */}
-        <section className="home-pipeline">
-          {[
-            { label: 'Chrome Extension', sub: 'tab capture + overlay' },
-            { label: 'Diarization Server', sub: 'MediaPipe + Whisper' },
-            { label: 'GraphRAG Backend', sub: 'FastAPI + Neo4j' },
-            { label: 'Claude', sub: 'extraction + answers' },
-            { label: '3D Interface', sub: 'Three.js + React' },
-          ].map((step, i, arr) => (
-            <div key={i} className="home-pipeline-step">
-              <div className="home-pipeline-dot" />
-              <div className="home-pipeline-label">{step.label}</div>
-              <div className="home-pipeline-sub">{step.sub}</div>
-              {i < arr.length - 1 && <div className="home-pipeline-arrow">→</div>}
-            </div>
-          ))}
+        {/* ── How it works ── */}
+        <section className="home-section">
+          <div className="home-section-label">HOW IT WORKS</div>
+          <h2 className="home-section-title">Three systems. One unified picture.</h2>
+          <div className="home-features-grid">
+            <FeatureCard
+              accent="#d48a50"
+              icon={
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
+                </svg>
+              }
+              title="Real-Time Diarization"
+              body="A Chrome extension captures your Google Meet tab's audio and video. MediaPipe tracks lip movement per face frame-by-frame. Groq Whisper transcribes every word with timestamps. The sync layer matches words to faces geometrically — no voice enrollment, no special hardware."
+            />
+            <FeatureCard
+              accent="#4a90d9"
+              icon={
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <circle cx="12" cy="5"  r="3"/><circle cx="5"  cy="19" r="3"/><circle cx="19" cy="19" r="3"/>
+                  <line x1="12" y1="8" x2="5"  y2="16"/><line x1="12" y1="8" x2="19" y2="16"/>
+                </svg>
+              }
+              title="Persistent Knowledge Graph"
+              body="Every meeting auto-ingests into Neo4j. Claude extracts typed entities and relationships from every chunk. Embeddings deduplicate — 'ML' and 'machine learning' merge into one node. Communities emerge. The graph accumulates across every session your team has ever had."
+            />
+            <FeatureCard
+              accent="#9b6dff"
+              icon={
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                </svg>
+              }
+              title="3D Graph Visualization"
+              body="A force-directed D3 simulation drives a Three.js scene with instanced meshes, bloom post-processing, depth fog, neural pulse animations, and a starfield. Nodes scale with mention count. Click to select, drag to pin, orbit to explore the full topology."
+            />
+          </div>
+        </section>
+
+        {/* ── Google Meet showcase ── */}
+        <section className="home-section">
+          <div className="home-section-label">IN ACTION</div>
+          <h2 className="home-section-title">Live inside Google Meet.</h2>
+          <p className="home-showcase-sub">A Chrome extension — no hardware, no voice enrollment. Just join your meeting.</p>
+          <MeetMockup />
+        </section>
+
+        {/* ── Data nodes showcase ── */}
+        <section className="home-section">
+          <div className="home-section-label">KNOWLEDGE GRAPH</div>
+          <h2 className="home-section-title">Every meeting becomes a node.</h2>
+          <p className="home-showcase-sub">Entities, decisions, and relationships — extracted by Claude, deduplicated, queryable in plain language.</p>
+          <DataNodesMockup />
+        </section>
+
+        {/* ── Sponsors ── */}
+        <section className="home-section">
+          <div className="home-section-label">BUILT WITH</div>
+          <h2 className="home-section-title">Powered by the best.</h2>
+          <div className="home-sponsors-grid">
+            {[
+              { name:'Groq',           sub:'Whisper + Llama 3.3 at inhuman speed' },
+              { name:'Whisper',        sub:'Millisecond word timestamps' },
+              { name:'Neo4j',          sub:'Persistent knowledge graph across every meeting' },
+              { name:'TokenRouter',    sub:'Smart LLM routing and cost control' },
+              { name:'VoiceOS',        sub:'Voice input seeded from your team\'s graph' },
+              { name:'AdaL by Sylph', sub:'The AI coding agent that built this with us' },
+            ].map((s, i) => (
+              <div key={i} className="home-sponsor-card">
+                <div className="home-sponsor-name">{s.name}</div>
+                <div className="home-sponsor-sub">{s.sub}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ── Closing statement ── */}
+        <section className="home-closing">
+          <p className="home-closing-text">
+            Every tool before us gave you a transcript.<br/>
+            We give you your organisation's brain.<br/>
+            <span className="home-closing-accent">It knows who said what, why it mattered — and it never forgets.</span>
+          </p>
         </section>
 
         {/* ── Footer ── */}

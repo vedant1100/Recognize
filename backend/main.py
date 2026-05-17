@@ -22,7 +22,7 @@ import numpy as np
 import pypdf
 import docx
 import httpx
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from neo4j import GraphDatabase
@@ -54,6 +54,7 @@ TOKENROUTER_BASE = os.getenv("TOKENROUTER_BASE_URL", "https://api.tokenrouter.co
 TOKENROUTER_KEY  = os.getenv("TOKENROUTER_API_KEY")
 HAIKU_MODEL      = os.getenv("HAIKU_MODEL",  "anthropic/claude-sonnet-4.6")
 SONNET_MODEL     = os.getenv("SONNET_MODEL", "anthropic/claude-sonnet-4.6")
+GROQ_API_KEY     = os.getenv("GROQ_API_KEY")
 
 claude       = OpenAI(base_url=TOKENROUTER_BASE, api_key=TOKENROUTER_KEY)
 async_claude = AsyncOpenAI(base_url=TOKENROUTER_BASE, api_key=TOKENROUTER_KEY)
@@ -871,6 +872,46 @@ async def delete_document(doc_id: str):
         )
         s.run("MATCH (d:Document {id: $id}) DETACH DELETE d", id=doc_id)
     return {"deleted": doc_id}
+
+
+@app.post("/api/transcribe")
+async def transcribe_with_groq(
+    file: UploadFile = File(...),
+    language: str = Form("en"),
+    custom_dictionary: Optional[str] = Form(None),
+):
+    if not GROQ_API_KEY:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY is not configured")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+
+    files = {
+        "file": (file.filename or "query.webm", content, file.content_type or "audio/webm")
+    }
+    data = {"model": "whisper-large-v3-turbo", "language": language}
+    if custom_dictionary:
+        # Kept for compatibility with frontend payload; Groq ignores unknown fields.
+        data["custom_dictionary"] = custom_dictionary
+
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        try:
+            resp = await client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers=headers,
+                data=data,
+                files=files,
+            )
+            if resp.status_code >= 400:
+                detail = resp.text
+                raise HTTPException(status_code=resp.status_code, detail=detail)
+            out = resp.json()
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail=f"Groq request failed: {e}") from e
+
+    return {"text": out.get("text", "")}
 
 
 # ── Serve Vite build ──────────────────────────────────────────────────────────

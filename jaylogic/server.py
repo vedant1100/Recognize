@@ -42,7 +42,7 @@ from sync.diarizer import Diarizer
 
 # ── config ────────────────────────────────────────────────────────────────────
 DOTENV_PATH = Path(__file__).resolve().parent / ".env"
-load_dotenv(dotenv_path=DOTENV_PATH, override=False)
+load_dotenv(dotenv_path=DOTENV_PATH, override=True)
 
 INIT_FRAMES = 30
 BOUNDING_BOXES = os.getenv("BOUNDING_BOXES", "true").strip().lower() == "true"
