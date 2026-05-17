@@ -1,27 +1,117 @@
-import { useMemo } from 'react'
 import { useStore } from './store'
 
-/* ── Animated star field ─────────────────────────── */
-function Starfield() {
-  const stars = useMemo(() => Array.from({ length: 220 }, (_, i) => ({
-    x: Math.random() * 100,
-    y: Math.random() * 100,
-    r: Math.random() * 1.2 + 0.15,
-    op: Math.random() * 0.55 + 0.08,
-    dur: (Math.random() * 3 + 2).toFixed(1),
-    delay: (Math.random() * 5).toFixed(1),
-  })), [])
+const EDGE_COLORS = ['#9b6dff','#4a90d9','#5cb87a','#50c8c8','#c8b840','#d48a50','#B8422E']
+
+function BrandLogo({ size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="3"  fill="#B8422E" />
+      <circle cx="4"  cy="6"  r="1.8" fill="#6C7278" />
+      <circle cx="20" cy="6"  r="1.8" fill="#6C7278" />
+      <circle cx="4"  cy="18" r="1.8" fill="#6C7278" />
+      <circle cx="20" cy="18" r="1.8" fill="#6C7278" />
+      <line x1="12" y1="12" x2="4"  y2="6"  stroke="#6C7278" strokeWidth="1" />
+      <line x1="12" y1="12" x2="20" y2="6"  stroke="#6C7278" strokeWidth="1" />
+      <line x1="12" y1="12" x2="4"  y2="18" stroke="#6C7278" strokeWidth="1" />
+      <line x1="12" y1="12" x2="20" y2="18" stroke="#6C7278" strokeWidth="1" />
+    </svg>
+  )
+}
+
+/* ── Neo4j-style knowledge graph for hero ─────────── */
+function HeroGraphVisual() {
+  const nodes = [
+    { x: 225, y: 185, r: 22, color: '#B8422E', label: ['Meeting', 'Memory'],  hub: true },
+    { x: 88,  y: 72,  r: 13, color: '#d48a50', label: ['John Smith'],          hub: false },
+    { x: 340, y: 60,  r: 12, color: '#50c8c8', label: ['TensorFlow'],          hub: false },
+    { x: 422, y: 192, r: 14, color: '#4a90d9', label: ['Acme Corp'],           hub: false },
+    { x: 360, y: 330, r: 11, color: '#c8b840', label: ['AI Summit'],           hub: false },
+    { x: 183, y: 350, r: 10, color: '#5cb87a', label: ['San Francisco'],       hub: false },
+    { x: 50,  y: 218, r: 12, color: '#d48a50', label: ['Sarah Lee'],           hub: false },
+    { x: 158, y: 46,  r: 11, color: '#9b6dff', label: ['Q3 Roadmap'],          hub: false },
+    { x: 358, y: 205, r: 13, color: '#9b6dff', label: ['Knowledge', 'Graph'],  hub: false },
+    { x: 76,  y: 322, r: 10, color: '#50c8c8', label: ['Neural Net'],          hub: false },
+    { x: 248, y: 48,  r: 10, color: '#B8422E', label: ['Diarization'],         hub: false },
+    { x: 115, y: 160, r: 9,  color: '#5cb87a', label: ['Team Sync'],           hub: false },
+  ]
+
+  const edges = [
+    [0,1],[0,2],[0,3],[0,4],[0,5],[0,6],[0,7],[0,8],[0,9],[0,10],[0,11],
+    [1,6],[1,7],[2,8],[3,4],[4,5],[5,6],[7,10],[8,3],[9,5],[11,6],[11,1],
+  ]
 
   return (
-    <svg className="home-starfield" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" aria-hidden>
-      {stars.map((s, i) => (
-        <circle
-          key={i} cx={s.x} cy={s.y} r={s.r} fill="white"
-          style={{
-            opacity: s.op,
-            animation: `twinkle ${s.dur}s ${s.delay}s ease-in-out infinite alternate`,
-          }}
-        />
+    <svg viewBox="0 0 470 390" className="home-hero-graph" fill="none" aria-hidden>
+      <defs>
+        {nodes.map((n, i) => (
+          <radialGradient key={i} id={`hgn-${i}`} cx="38%" cy="32%" r="65%">
+            <stop offset="0%"   stopColor={n.color} stopOpacity="0.95"/>
+            <stop offset="100%" stopColor={n.color} stopOpacity="0.45"/>
+          </radialGradient>
+        ))}
+        <filter id="hg-glow" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="3.5" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="hg-glow-hub" x="-100%" y="-100%" width="300%" height="300%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      {/* Edges */}
+      {edges.map(([a, b], i) => {
+        const isHub = nodes[a].hub || nodes[b].hub
+        return (
+          <line key={i}
+            x1={nodes[a].x} y1={nodes[a].y}
+            x2={nodes[b].x} y2={nodes[b].y}
+            stroke={isHub ? `${nodes[a].hub ? nodes[b].color : nodes[a].color}50` : 'rgba(108,114,120,0.22)'}
+            strokeWidth={isHub ? 1.4 : 0.8}
+          />
+        )
+      })}
+
+      {/* Pulse rings on hub */}
+      <circle cx={225} cy={185} r="34" stroke="#B8422E" strokeWidth="1.2"
+        fill="none" opacity="0.35" className="hg-pulse hg-pulse--1"/>
+      <circle cx={225} cy={185} r="50" stroke="#B8422E" strokeWidth="0.7"
+        fill="none" opacity="0.18" className="hg-pulse hg-pulse--2"/>
+
+      {/* Nodes */}
+      {nodes.map((n, i) => (
+        <g key={i} filter={n.hub ? 'url(#hg-glow-hub)' : 'url(#hg-glow)'}>
+          {/* Aura */}
+          <circle cx={n.x} cy={n.y} r={n.r + 6} fill={n.color} opacity="0.1"/>
+          {/* Body */}
+          <circle cx={n.x} cy={n.y} r={n.r} fill={`url(#hgn-${i})`}/>
+          {/* Specular */}
+          <ellipse
+            cx={n.x - n.r * 0.22} cy={n.y - n.r * 0.28}
+            rx={n.r * 0.32} ry={n.r * 0.22}
+            fill="rgba(255,255,255,0.22)"
+            transform={`rotate(-20,${n.x - n.r * 0.22},${n.y - n.r * 0.28})`}
+          />
+        </g>
+      ))}
+
+      {/* Labels */}
+      {nodes.map((n, i) => (
+        <g key={`lbl-${i}`}>
+          {n.label.map((line, li) => (
+            <text key={li}
+              x={n.x} y={n.y + n.r + 13 + li * 11}
+              textAnchor="middle"
+              fill="rgba(247,245,242,0.72)"
+              fontSize="9.5"
+              fontFamily="'Space Grotesk', sans-serif"
+              fontWeight="600"
+              letterSpacing="0.02em"
+            >
+              {line}
+            </text>
+          ))}
+        </g>
       ))}
     </svg>
   )
@@ -30,41 +120,51 @@ function Starfield() {
 /* ── Mini graph illustration ─────────────────────── */
 function GraphIllustration() {
   return (
-    <svg className="home-card-art" viewBox="0 0 220 130" fill="none">
-      {/* Glow halos */}
-      <circle cx="110" cy="65" r="38" fill="rgba(184,66,46,0.07)" />
-      <circle cx="110" cy="65" r="22" fill="rgba(184,66,46,0.08)" />
+    <svg className="home-card-art" viewBox="0 0 320 170" fill="none">
+      {/* Deep glow halos behind center */}
+      <circle cx="160" cy="85" r="60" fill="rgba(184,66,46,0.07)" />
+      <circle cx="160" cy="85" r="38" fill="rgba(184,66,46,0.09)" />
+      <circle cx="160" cy="85" r="20" fill="rgba(184,66,46,0.1)" />
 
-      {/* Edges */}
+      {/* Edges — more of them, spread wider */}
       {[
-        [110,65, 38,22],  [110,65, 185,28], [110,65, 178,102],
-        [110,65, 42,98],  [38,22,  15,52],  [185,28, 205,62],
-        [178,102,152,120],[42,98,  68,120],  [38,22,  68,14],
+        [160,85,  52,28],  [160,85, 270,30], [160,85, 262,140],
+        [160,85,  55,135], [160,85, 160,10], [160,85, 300,85],
+        [52,28,   18,65],  [270,30, 305,65], [262,140,220,162],
+        [55,135,  88,162], [52,28,  90,12],  [270,30, 230,12],
+        [160,10,  210,10], [300,85, 300,120],
       ].map(([x1,y1,x2,y2], i) => (
         <line key={i} x1={x1} y1={y1} x2={x2} y2={y2}
-          stroke={['#9b6dff','#4a90d9','#5cb87a','#50c8c8','#c8b840','#d48a50','#9b6dff','#5cb87a','#B8422E'][i % 9]}
-          strokeWidth="0.9" opacity="0.45" />
+          stroke={EDGE_COLORS[i % EDGE_COLORS.length]}
+          strokeWidth="1" opacity="0.4" />
       ))}
 
-      {/* Outer nodes */}
+      {/* Outer nodes — more, bigger */}
       {[
-        [38,22,  6.5,'#9b6dff'], [185,28, 5.5,'#4a90d9'],
-        [178,102,7.5,'#5cb87a'], [42,98,  5.5,'#50c8c8'],
-        [15,52,  4.5,'#c8b840'], [205,62, 4,  '#d48a50'],
-        [152,120,4.5,'#9b6dff'], [68,120, 4,  '#5cb87a'],
-        [68,14,  4,  '#B8422E'],
+        [52,28,   8,  '#9b6dff'], [270,30, 7,  '#4a90d9'],
+        [262,140, 9,  '#5cb87a'], [55,135, 7,  '#50c8c8'],
+        [18,65,   6,  '#c8b840'], [305,65, 5.5,'#d48a50'],
+        [220,162, 6,  '#9b6dff'], [88,162, 5,  '#5cb87a'],
+        [90,12,   5,  '#B8422E'], [230,12, 5,  '#4a90d9'],
+        [160,10,  6,  '#50c8c8'], [300,120,5,  '#c8b840'],
       ].map(([cx,cy,r,fill], i) => (
-        <circle key={i} cx={cx} cy={cy} r={r} fill={fill} opacity="0.85" />
+        <g key={i}>
+          <circle cx={cx} cy={cy} r={r * 1.8} fill={fill} opacity="0.08" />
+          <circle cx={cx} cy={cy} r={r} fill={fill} opacity="0.9" />
+        </g>
       ))}
 
-      {/* Pulse ring */}
-      <circle cx="110" cy="65" r="17" stroke="#B8422E" strokeWidth="0.8"
-        fill="none" opacity="0.35" strokeDasharray="4 3" className="home-graph-ring" />
+      {/* Outer pulse rings */}
+      <circle cx="160" cy="85" r="28" stroke="#B8422E" strokeWidth="0.8"
+        fill="none" opacity="0.25" strokeDasharray="5 4" className="home-graph-ring" />
+      <circle cx="160" cy="85" r="44" stroke="#B8422E" strokeWidth="0.5"
+        fill="none" opacity="0.12" strokeDasharray="3 6" className="home-graph-ring home-graph-ring--outer" />
 
       {/* Center node layers */}
-      <circle cx="110" cy="65" r="13" fill="#7a1c10" opacity="0.7" />
-      <circle cx="110" cy="65" r="9"  fill="#B8422E" opacity="0.95" />
-      <circle cx="110" cy="65" r="4"  fill="#ff8866" opacity="1" />
+      <circle cx="160" cy="85" r="22" fill="#4a0f08" opacity="0.6" />
+      <circle cx="160" cy="85" r="16" fill="#B8422E" opacity="0.95" />
+      <circle cx="160" cy="85" r="8"  fill="#ff8866" opacity="1" />
+      <circle cx="160" cy="85" r="3"  fill="#ffffff" opacity="0.9" />
     </svg>
   )
 }
@@ -72,46 +172,58 @@ function GraphIllustration() {
 /* ── Mini analytics illustration ─────────────────── */
 function AnalyticsIllustration() {
   const bars = [
-    { x: 28, h: 56, c: '#B8422E' },
-    { x: 58, h: 76, c: '#4a90d9' },
-    { x: 88, h: 40, c: '#9b6dff' },
-    { x: 118,h: 64, c: '#5cb87a' },
-    { x: 148,h: 48, c: '#50c8c8' },
+    { x: 22,  h: 72,  c: '#B8422E' },
+    { x: 68,  h: 100, c: '#4a90d9' },
+    { x: 114, h: 52,  c: '#9b6dff' },
+    { x: 160, h: 84,  c: '#5cb87a' },
+    { x: 206, h: 62,  c: '#50c8c8' },
+    { x: 252, h: 90,  c: '#c8b840' },
   ]
-  const top = bars.map(b => [b.x + 10, 110 - b.h])
+  const top = bars.map(b => [b.x + 14, 130 - b.h])
   const polyPts = top.map(p => p.join(',')).join(' ')
 
   return (
-    <svg className="home-card-art" viewBox="0 0 200 130" fill="none">
-      {/* Grid */}
-      {[0,1,2,3].map(i => (
-        <line key={i} x1="18" y1={110 - i*28} x2="185" y2={110 - i*28}
-          stroke="rgba(108,114,120,0.12)" strokeWidth="0.7" />
+    <svg className="home-card-art" viewBox="0 0 300 160" fill="none">
+      {/* Grid lines */}
+      {[0,1,2,3,4].map(i => (
+        <line key={i} x1="16" y1={130 - i*30} x2="290" y2={130 - i*30}
+          stroke="rgba(108,114,120,0.1)" strokeWidth="0.8" />
       ))}
-      <line x1="18" y1="18" x2="18" y2="112" stroke="rgba(108,114,120,0.18)" strokeWidth="0.8" />
-      <line x1="18" y1="112" x2="186" y2="112" stroke="rgba(108,114,120,0.18)" strokeWidth="0.8" />
+      <line x1="16" y1="16" x2="16"  y2="132" stroke="rgba(108,114,120,0.18)" strokeWidth="0.9" />
+      <line x1="16" y1="132" x2="292" y2="132" stroke="rgba(108,114,120,0.18)" strokeWidth="0.9" />
+
+      {/* Bar glows */}
+      {bars.map((b, i) => (
+        <rect key={`glow-${i}`} x={b.x - 4} y={130 - b.h - 8} width="36" height={b.h + 8} rx="4"
+          fill={b.c} opacity="0.06" />
+      ))}
 
       {/* Bars */}
       {bars.map((b, i) => (
-        <rect key={i} x={b.x} y={110 - b.h} width="20" height={b.h} rx="2.5"
-          fill={b.c} opacity="0.75" />
+        <rect key={i} x={b.x} y={130 - b.h} width="28" height={b.h} rx="3.5"
+          fill={b.c} opacity="0.8" />
       ))}
 
-      {/* Trend line */}
+      {/* Trend line + dots */}
       <polyline points={polyPts}
-        stroke="rgba(247,245,242,0.35)" strokeWidth="1.4"
-        fill="none" strokeDasharray="4 2.5" strokeLinecap="round" />
+        stroke="rgba(247,245,242,0.3)" strokeWidth="1.6"
+        fill="none" strokeDasharray="5 3" strokeLinecap="round" />
       {top.map(([x,y], i) => (
-        <circle key={i} cx={x} cy={y} r="2.2" fill="rgba(247,245,242,0.5)" />
+        <g key={i}>
+          <circle cx={x} cy={y} r="4" fill={bars[i].c} opacity="0.25" />
+          <circle cx={x} cy={y} r="2.5" fill="rgba(247,245,242,0.7)" />
+        </g>
       ))}
 
-      {/* Radar polygon in corner */}
-      <g transform="translate(162, 22)">
-        <polygon points="12,0 22,10 12,20 2,10" stroke="#B8422E" strokeWidth="1"
-          fill="rgba(184,66,46,0.15)" />
-        <polygon points="12,4 18,10 12,16 6,10" stroke="#4a90d9" strokeWidth="0.7"
+      {/* Radar in top-right corner */}
+      <g transform="translate(248, 14)">
+        <polygon points="18,0 34,14 18,28 2,14" stroke="#B8422E" strokeWidth="1.2"
+          fill="rgba(184,66,46,0.12)" />
+        <polygon points="18,5 28,14 18,23 8,14" stroke="#4a90d9" strokeWidth="0.8"
           fill="rgba(74,144,217,0.1)" />
-        <circle cx="12" cy="10" r="2" fill="#B8422E" opacity="0.8" />
+        <polygon points="18,9 23,14 18,19 13,14" stroke="#9b6dff" strokeWidth="0.6"
+          fill="rgba(155,109,255,0.1)" />
+        <circle cx="18" cy="14" r="2.5" fill="#B8422E" opacity="0.9" />
       </g>
     </svg>
   )
@@ -120,7 +232,7 @@ function AnalyticsIllustration() {
 /* ── Feature card ────────────────────────────────── */
 function FeatureCard({ icon, title, body, accent = '#B8422E' }) {
   return (
-    <div className="home-feature-card" style={{ '--feat-accent': accent }}>
+    <div className="home-dark-card home-feature-card" style={{ '--feat-accent': accent }}>
       <div className="home-feat-icon">{icon}</div>
       <div className="home-feat-title">{title}</div>
       <p className="home-feat-body">{body}</p>
@@ -134,27 +246,11 @@ export function Home() {
 
   return (
     <div className="home-root">
-      <Starfield />
-
-      {/* Nebula glows */}
-      <div className="home-nebula home-nebula-1" />
-      <div className="home-nebula home-nebula-2" />
-      <div className="home-nebula home-nebula-3" />
 
       {/* ── Nav bar ── */}
       <header className="home-nav">
         <div className="home-nav-brand">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="3"  fill="#B8422E" />
-            <circle cx="4"  cy="6"  r="1.8" fill="#6C7278" />
-            <circle cx="20" cy="6"  r="1.8" fill="#6C7278" />
-            <circle cx="4"  cy="18" r="1.8" fill="#6C7278" />
-            <circle cx="20" cy="18" r="1.8" fill="#6C7278" />
-            <line x1="12" y1="12" x2="4"  y2="6"  stroke="#6C7278" strokeWidth="1" />
-            <line x1="12" y1="12" x2="20" y2="6"  stroke="#6C7278" strokeWidth="1" />
-            <line x1="12" y1="12" x2="4"  y2="18" stroke="#6C7278" strokeWidth="1" />
-            <line x1="12" y1="12" x2="20" y2="18" stroke="#6C7278" strokeWidth="1" />
-          </svg>
+          <BrandLogo />
           <span className="home-nav-wordmark">RECOGNIZE</span>
           <span className="home-nav-badge">BETA</span>
         </div>
@@ -167,17 +263,47 @@ export function Home() {
       <main className="home-main">
         {/* ── Hero ── */}
         <section className="home-hero">
-          <div className="home-hero-eyebrow">Real-time meeting intelligence</div>
-          <h1 className="home-hero-title">
-            Every word attributed.<br />
-            Every idea mapped.<br />
-            <span className="home-hero-accent">Nothing forgotten.</span>
-          </h1>
-          <p className="home-hero-sub">
-            Recognize identifies who is speaking in Google Meet at the word level, transcribes everything,
-            and feeds it all into a persistent 3D knowledge graph that accumulates your team's
-            institutional memory across every session.
-          </p>
+
+          {/* Left column — all the text */}
+          <div className="home-hero-left">
+            <div className="home-hero-status">
+              <span className="home-hero-status-dot" />
+              <span>Live Beta · Real-time speaker diarization active</span>
+            </div>
+
+            <div className="home-hero-eyebrow">Real-time meeting intelligence</div>
+
+            <h1 className="home-hero-title">
+              Every word attributed.<br />
+              Every idea mapped.<br />
+              <span className="home-hero-accent">Nothing forgotten.</span>
+            </h1>
+
+            <p className="home-hero-sub">
+              Recognize identifies who is speaking in Google Meet at the word level,
+              transcribes everything, and builds a persistent 3D knowledge graph of
+              your team's institutional memory.
+            </p>
+
+            <div className="home-hero-ctas">
+              <button className="home-btn-primary" onClick={() => setPage('graph')}>
+                Open Context Graph
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                </svg>
+              </button>
+              <button className="home-btn-secondary" onClick={() => setPage('dashboard')}>
+                View Analytics
+              </button>
+            </div>
+          </div>
+
+          {/* Right column — recognize.ai + Neo4j graph visual */}
+          <div className="home-hero-right">
+            <div className="home-hero-domain">recognize.ai</div>
+            <HeroGraphVisual />
+          </div>
+
         </section>
 
         {/* ── App cards ── */}
@@ -278,7 +404,7 @@ export function Home() {
           <div className="home-section-label">WHAT IT SOLVES</div>
           <h2 className="home-section-title">Two open problems. Both closed.</h2>
           <div className="home-solves-grid">
-            <div className="home-solve-card">
+            <div className="home-dark-card home-solve-card">
               <div className="home-solve-num">01</div>
               <div className="home-solve-title">The speaker attribution problem</div>
               <p className="home-solve-body">
@@ -295,7 +421,7 @@ export function Home() {
                 </p>
               </div>
             </div>
-            <div className="home-solve-card">
+            <div className="home-dark-card home-solve-card">
               <div className="home-solve-num">02</div>
               <div className="home-solve-title">The institutional memory problem</div>
               <p className="home-solve-body">
@@ -336,17 +462,7 @@ export function Home() {
         {/* ── Footer ── */}
         <footer className="home-footer">
           <div className="home-footer-brand">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="3"  fill="#B8422E" />
-              <circle cx="4"  cy="6"  r="1.8" fill="#6C7278" />
-              <circle cx="20" cy="6"  r="1.8" fill="#6C7278" />
-              <circle cx="4"  cy="18" r="1.8" fill="#6C7278" />
-              <circle cx="20" cy="18" r="1.8" fill="#6C7278" />
-              <line x1="12" y1="12" x2="4"  y2="6"  stroke="#6C7278" strokeWidth="1" />
-              <line x1="12" y1="12" x2="20" y2="6"  stroke="#6C7278" strokeWidth="1" />
-              <line x1="12" y1="12" x2="4"  y2="18" stroke="#6C7278" strokeWidth="1" />
-              <line x1="12" y1="12" x2="20" y2="18" stroke="#6C7278" strokeWidth="1" />
-            </svg>
+            <BrandLogo size={14} />
             <span>RECOGNIZE</span>
           </div>
           <span className="home-footer-copy">Meeting intelligence for teams that think in graphs.</span>
