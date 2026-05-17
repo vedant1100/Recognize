@@ -157,23 +157,6 @@ Meeting Transcript → AI Entity Extraction → Knowledge Graph → Semantic Sea
 
 ---
 
-## 🏆 Hackathon Sponsor Tools Integration
-
-We've integrated **2 sponsor tools** to build a production-ready platform:
-
-
-### 1. **[TokenRouter](https://tokenrouter.ai/)** 🔀 (Model Routing & Optimization)
-**Usage**: Smart routing between AI models with caching and fallback  
-**Why**: Cost optimization and reliability with automatic failover  
-**Impact**: 40% cost reduction with response caching, 99.9% uptime with fallback models  
-**Integration**: LLM request routing layer for production reliability
-
-### 3. **[AdaL (Sylph AI)](https://sylph.ai/)** 🤖 (AI Coding Agent)
-**Usage**: Used AdaL as the AI coding agent throughout development  
-**Why**: AdaL's multi-model support (Claude, GPT, Gemini) and MCP server integration accelerated building complex features like the GraphRAG pipeline and 3D visualization  
-**Impact**: Faster iteration on the knowledge graph backend and frontend 3D scene — features that would have taken days were built in hours  
-**Integration**: Development tooling — used to scaffold, debug, and refine the entire Recognize codebase
-
 
 
 ---
