@@ -341,17 +341,6 @@ Upload these to see Recognize in action with real team conversations!
 - **Rishi** - Data Engineer & Graph Architecture
 - **Jay** - Backend Engineer & 3D Visualization 
 
----
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details
-
----
-
-
-
-
 
 
 - **GitHub**: [github.com/vedant1100/Recognize](https://github.com/vedant1100/Recognize)
