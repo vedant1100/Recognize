@@ -267,40 +267,6 @@ npm run dev
 
 ---
 
-## 📖 Usage
-
-### 1. Upload Meeting Transcript
-
-Via UI:
-- Click "Upload" button
-- Select your transcript file (TXT, PDF, DOCX)
-- Wait for processing (2-5 seconds)
-
-Via API:
-```bash
-curl -X POST http://localhost:8000/upload \
-  -F "file=@meeting_transcript.txt"
-```
-
-### 2. View Knowledge Graph
-
-- Navigate to http://localhost:5173
-- See 3D visualization of entities and relationships
-- Click on nodes to explore details
-
-### 3. Query the Graph
-
-Via UI:
-- Type question in chat panel
-- Example: "What did Tarang discuss about AI?"
-
-Via API:
-```bash
-curl -X POST http://localhost:8000/query \
-  -H "Content-Type: application/json" \
-  -d '{"query": "What is Tarang working on?", "top_k": 5}'
-```
-
 ---
 
 ## 🎯 Demo Data
