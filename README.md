@@ -257,18 +257,6 @@ cd ..
 npm install
 npm run dev
 ```
-
-### Access Points
-
-- **Frontend**: http://localhost:5173
-- **Backend API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
-- **Neo4j Browser**: http://localhost:7474
-
----
-
----
-
 ## 🎯 Demo Data
 
 We've included sample meeting transcripts:
